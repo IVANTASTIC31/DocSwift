@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Packaging
+build/
+dist/
+*.exe
+
+# Local tooling
+.agents/
+.codex/
+
+# User input, generated output, and QA artifacts
+*.docx
+*.xlsx
+*.xls
+*.png
+*.pdf
+*.log
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -7,7 +7,9 @@ from openpyxl import Workbook, load_workbook
 from core import (
     OperationRow,
     ProcessCard,
+    generate_template_atomic,
     generate_template,
+    group_operations,
     output_row_count,
     preview_rows,
 )
@@ -63,6 +65,21 @@ class CoreRulesTest(unittest.TestCase):
         self.assertEqual(1, output_row_count([card]))
         self.assertNotIn("待焊", preview_rows([card])[0][4])
 
+    def test_custom_exclusion_and_original_range(self) -> None:
+        result = group_operations(
+            [
+                OperationRow("车", "4", "第一步"),
+                OperationRow("", "5", "第二步"),
+                OperationRow("外协", "6", "送外加工"),
+                OperationRow("检验", "7", "检验"),
+            ],
+            ("待焊", "外协"),
+        )
+
+        self.assertEqual(2, len(result.operations))
+        self.assertEqual("4～5", result.operations[0].original_range)
+        self.assertEqual(["外协"], [operation.work_type for operation in result.excluded])
+
     def test_generation_fills_blank_operation_header_and_formats_cells(self) -> None:
         card = self.make_card(
             [
@@ -114,6 +131,48 @@ class CoreRulesTest(unittest.TestCase):
                                 for side in ("left", "right", "top", "bottom")
                             )
                         )
+
+    def test_atomic_export_replaces_route_without_duplicate_rows(self) -> None:
+        original = self.make_card([OperationRow("车", "1", "旧内容")])
+        updated = self.make_card([OperationRow("车", "1", "新内容")])
+
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            template = directory / "template.xlsx"
+            output = directory / "output.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(
+                [
+                    "工艺路线编号",
+                    "工艺路线名称",
+                    "工序/工艺路线列表",
+                    "工序号",
+                    "工序内容",
+                    "类型",
+                    "报工数配比",
+                    "是否锁定为最后一道工序",
+                    "工时/分钟",
+                ]
+            )
+            sheet.append([None] * 9)
+            workbook.save(template)
+
+            generate_template_atomic([original], template, output)
+            generate_template_atomic(
+                [updated],
+                template,
+                output,
+                replace_route_texts=[original.route_text],
+            )
+
+            generated = load_workbook(output).active
+            values = [
+                generated.cell(row, 5).value
+                for row in range(2, generated.max_row + 1)
+                if generated.cell(row, 1).value
+            ]
+            self.assertEqual(["新内容"], values)
 
 
 if __name__ == "__main__":

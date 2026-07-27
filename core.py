@@ -3,7 +3,10 @@ from __future__ import annotations
 from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import re
+import shutil
+import tempfile
 from typing import Iterable, Sequence
 
 from docx import Document
@@ -50,39 +53,75 @@ class ProcessCard:
         return f"{self.part_no}{self.part_name}".strip()
 
 
-def _group_operations(operations: Sequence[OperationRow]) -> list[OperationRow]:
+@dataclass(frozen=True)
+class FinalOperation:
+    work_type: str
+    operation_no: str
+    original_range: str
+    content: str
+
+
+@dataclass(frozen=True)
+class GroupingResult:
+    operations: list[FinalOperation]
+    excluded: list[OperationRow]
+
+
+def group_operations(
+    operations: Sequence[OperationRow],
+    exclusion_terms: Sequence[str] = ("待焊",),
+) -> GroupingResult:
     """Collapse continuation rows into the preceding named work type.
 
     Process cards commonly put the work type only on the first row of a
     multi-step operation.  Any following blank work-type row is treated as
-    continuation detail.  Operations containing "待焊" are always
-    excluded because they must not be imported into the work-order system.
+    continuation detail. Operations matching an exclusion term are omitted
+    before grouping. The result keeps the original numeric range for review,
+    while Excel still receives the first operation number.
     """
-    operations = [
-        operation
-        for operation in operations
-        if "待焊" not in f"{operation.work_type}{operation.content}"
-    ]
-    grouped: list[OperationRow] = []
+    cleaned_terms = tuple(term.strip().casefold() for term in exclusion_terms if term.strip())
+    included: list[OperationRow] = []
+    excluded: list[OperationRow] = []
+    for operation in operations:
+        searchable = f"{operation.work_type}{operation.content}".casefold()
+        if any(term in searchable for term in cleaned_terms):
+            excluded.append(operation)
+        else:
+            included.append(operation)
+
+    grouped: list[FinalOperation] = []
     index = 0
-    while index < len(operations):
-        operation = operations[index]
+    while index < len(included):
+        operation = included[index]
         if not operation.work_type:
-            grouped.append(operation)
+            grouped.append(
+                FinalOperation(
+                    work_type=operation.work_type,
+                    operation_no=operation.operation_no,
+                    original_range=operation.operation_no,
+                    content=operation.content,
+                )
+            )
             index += 1
             continue
 
         next_index = index + 1
         continuations: list[OperationRow] = []
-        while next_index < len(operations) and not operations[next_index].work_type:
-            continuations.append(operations[next_index])
+        while next_index < len(included) and not included[next_index].work_type:
+            continuations.append(included[next_index])
             next_index += 1
 
         if continuations:
+            last_no = continuations[-1].operation_no
             grouped.append(
-                OperationRow(
+                FinalOperation(
                     work_type=operation.work_type,
                     operation_no=operation.operation_no,
+                    original_range=(
+                        operation.operation_no
+                        if operation.operation_no == last_no
+                        else f"{operation.operation_no}～{last_no}"
+                    ),
                     content="\n".join(
                         item.content for item in (operation, *continuations) if item.content
                     ),
@@ -90,10 +129,29 @@ def _group_operations(operations: Sequence[OperationRow]) -> list[OperationRow]:
             )
             index = next_index
         else:
-            grouped.append(operation)
+            grouped.append(
+                FinalOperation(
+                    work_type=operation.work_type,
+                    operation_no=operation.operation_no,
+                    original_range=operation.operation_no,
+                    content=operation.content,
+                )
+            )
             index += 1
 
-    return grouped
+    return GroupingResult(operations=grouped, excluded=excluded)
+
+
+def _group_operations(operations: Sequence[OperationRow]) -> list[OperationRow]:
+    result = group_operations(operations)
+    return [
+        OperationRow(
+            work_type=operation.work_type,
+            operation_no=operation.operation_no,
+            content=operation.content,
+        )
+        for operation in result.operations
+    ]
 
 
 def output_row_count(cards: Sequence[ProcessCard]) -> int:
@@ -405,6 +463,92 @@ def generate_template(
             row_index += 1
 
     workbook.save(output_path)
+    return output_path
+
+
+def remove_routes_from_workbook(
+    workbook_path: str | Path,
+    route_texts: Iterable[str],
+    *,
+    start_row: int = 2,
+) -> int:
+    """Remove previously exported routes from an existing workbook.
+
+    Route text is unique within one target workbook by business rule. Rows are
+    removed from bottom to top so unrelated routes and their relative order are
+    preserved.
+    """
+    wanted = {_clean_text(value).casefold() for value in route_texts if _clean_text(value)}
+    if not wanted:
+        return 0
+    workbook_path = Path(workbook_path)
+    workbook = load_workbook(workbook_path)
+    worksheet = workbook.active
+    column_map = _build_column_map(worksheet)
+    route_column = column_map["route_no"]
+    rows_to_delete = [
+        row_index
+        for row_index in range(start_row, worksheet.max_row + 1)
+        if _clean_text(worksheet.cell(row_index, route_column).value).casefold() in wanted
+    ]
+    for row_index in reversed(rows_to_delete):
+        worksheet.delete_rows(row_index, 1)
+    workbook.save(workbook_path)
+    return len(rows_to_delete)
+
+
+def generate_template_atomic(
+    cards: Sequence[ProcessCard],
+    template_path: str | Path,
+    output_path: str | Path,
+    *,
+    start_row: int = 2,
+    replace_route_texts: Iterable[str] = (),
+) -> Path:
+    """Write all cards as one transaction and leave the old output untouched on failure."""
+    if not cards:
+        raise ValueError("没有已确认且未导出的工艺卡。")
+
+    template_path = Path(template_path)
+    output_path = Path(output_path)
+    if not template_path.exists():
+        raise FileNotFoundError(f"Excel 模板不存在：{template_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.stem}.",
+        suffix=".tmp.xlsx",
+        dir=output_path.parent,
+    )
+    os.close(file_descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        if output_path.exists():
+            shutil.copy2(output_path, temporary_path)
+            remove_routes_from_workbook(
+                temporary_path,
+                replace_route_texts,
+                start_row=start_row,
+            )
+            generate_template(
+                cards,
+                template_path,
+                temporary_path,
+                start_row=start_row,
+                append=True,
+            )
+        else:
+            generate_template(
+                cards,
+                template_path,
+                temporary_path,
+                start_row=start_row,
+                append=False,
+            )
+        os.replace(temporary_path, output_path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
     return output_path
 
 

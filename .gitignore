@@ -13,13 +13,16 @@ dist/
 .agents/
 .codex/
 
-# User input, generated output, and QA artifacts
+# User input, generated output, QA artifacts, and local state
 *.docx
 *.xlsx
 *.xls
 *.png
 *.pdf
 *.log
+*.db
+*.db-shm
+*.db-wal
 
 # OS and editor files
 .DS_Store

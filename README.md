@@ -143,28 +143,10 @@ python -m unittest discover -s tests -v
 %LOCALAPPDATA%\DocSwift
 ```
 
-## 一键发布
+## 发布流程设计
 
-项目使用 `release\publish.ps1` 统一完成版本更新、测试、Windows 打包、Git
-提交与标签、公司 Gitea 发布版、Ubuntu 更新服务器上传及下载端校验。
+PowerShell 一键发布脚本在完成 `v0.3.0` 首次内部自动发布后已退役。后续将由
+独立桌面发布工具统一管理测试、构建、公司 Gitea 发布版和 Ubuntu 自动更新源。
 
-先进行无修改演练：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\release\publish.ps1 `
-  -Version 0.3.0 `
-  -NotesFile .\release\notes-v0.3.0.md `
-  -PlanOnly
-```
-
-正式发布：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\release\publish.ps1 `
-  -Version 0.3.0 `
-  -NotesFile .\release\notes-v0.3.0.md
-```
-
-脚本只推送 `company`，不会推送 GitHub 或 Gitee。首次使用前需要配置 SSH
-密钥、更新目录权限和 `DOCSWIFT_GITEA_TOKEN`，完整说明见
-[release/ONE_CLICK_PUBLISH.md](release/ONE_CLICK_PUBLISH.md)。
+发布顺序、安全约束、重试策略及桌面工具需求见
+[RELEASE_AUTOMATION_DESIGN.md](RELEASE_AUTOMATION_DESIGN.md)。

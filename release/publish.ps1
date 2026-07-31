@@ -427,12 +427,17 @@ try {
         }
 
         $headCommit = Get-GitOutput rev-parse HEAD
-        $existingTagCommit = (& git rev-list -n 1 $TagName 2>$null)
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($existingTagCommit)) {
+        & git show-ref --verify --quiet "refs/tags/$TagName"
+        $tagLookupExitCode = $LASTEXITCODE
+        if ($tagLookupExitCode -eq 0) {
+            $existingTagCommit = Get-GitOutput rev-list -n 1 $TagName
             if ($existingTagCommit.Trim() -ne $headCommit) {
                 throw "Tag $TagName already points to another commit."
             }
             Write-Host "Tag $TagName already points to the current commit."
+        }
+        elseif ($tagLookupExitCode -ne 1) {
+            throw "Unable to inspect Git tag $TagName."
         }
         else {
             Invoke-Checked `

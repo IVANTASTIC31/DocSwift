@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from update_service import UpdateService, parse_version
+from update_service import UpdateError, UpdateService, parse_version
 
 
 class FakeResponse(io.BytesIO):
@@ -43,7 +43,10 @@ class UpdateServiceTest(unittest.TestCase):
             "update_service._request_bytes",
             return_value=json.dumps(payload).encode("utf-8"),
         ):
-            info = UpdateService("example/repo").check("0.2.0")
+            info = UpdateService(
+                "example/repo",
+                manifest_url=None,
+            ).check("0.2.0")
         self.assertIsNotNone(info)
         assert info is not None
         self.assertEqual("0.3.0", info.version)
@@ -55,7 +58,12 @@ class UpdateServiceTest(unittest.TestCase):
             "update_service._request_bytes",
             return_value=json.dumps(payload).encode("utf-8"),
         ):
-            self.assertIsNone(UpdateService("example/repo").check("0.2.0"))
+            self.assertIsNone(
+                UpdateService(
+                    "example/repo",
+                    manifest_url=None,
+                ).check("0.2.0")
+            )
 
     def test_download_verifies_sha256(self) -> None:
         archive = b"valid update archive"
@@ -77,7 +85,10 @@ class UpdateServiceTest(unittest.TestCase):
             "update_service._request_bytes",
             return_value=json.dumps(payload).encode("utf-8"),
         ):
-            info = UpdateService("example/repo").check("0.2.0")
+            info = UpdateService(
+                "example/repo",
+                manifest_url=None,
+            ).check("0.2.0")
         assert info is not None
         with TemporaryDirectory() as temporary_directory, patch(
             "update_service._open_url",
@@ -89,6 +100,119 @@ class UpdateServiceTest(unittest.TestCase):
             )
             self.assertEqual(archive, result.read_bytes())
             self.assertFalse(result.with_suffix(".zip.part").exists())
+
+    def test_internal_manifest_is_preferred(self) -> None:
+        manifest_url = (
+            "http://192.168.100.3/updates/docswift/latest.json"
+        )
+        payload = {
+            "manifest_version": 1,
+            "application": "DocSwift",
+            "version": "0.3.0",
+            "published_at": "2026-07-31T08:32:00+08:00",
+            "download_url": (
+                "http://192.168.100.3/updates/docswift/releases/v0.3.0/"
+                "DocSwift-v0.3.0-windows-portable.zip"
+            ),
+            "sha256": "b" * 64,
+            "size": 456,
+            "notes": "内部版本",
+        }
+        with patch(
+            "update_service._request_bytes",
+            return_value=json.dumps(payload).encode("utf-8"),
+        ) as request:
+            info = UpdateService(manifest_url=manifest_url).check("0.2.0")
+
+        self.assertIsNotNone(info)
+        assert info is not None
+        self.assertEqual("0.3.0", info.version)
+        self.assertEqual("公司服务器", info.source)
+        self.assertEqual("b" * 64, info.asset.sha256)
+        request.assert_called_once_with(manifest_url)
+
+    def test_current_internal_version_does_not_query_public_source(self) -> None:
+        manifest_url = (
+            "http://192.168.100.3/updates/docswift/latest.json"
+        )
+        payload = {
+            "manifest_version": 1,
+            "application": "DocSwift",
+            "version": "0.2.0",
+        }
+        with patch(
+            "update_service._request_bytes",
+            return_value=json.dumps(payload).encode("utf-8"),
+        ) as request:
+            result = UpdateService(manifest_url=manifest_url).check("0.2.0")
+
+        self.assertIsNone(result)
+        request.assert_called_once_with(manifest_url)
+
+    def test_github_is_used_when_internal_server_is_unavailable(self) -> None:
+        manifest_url = (
+            "http://192.168.100.3/updates/docswift/latest.json"
+        )
+        github_payload = {
+            "tag_name": "v0.3.0",
+            "body": "公网备用版本",
+            "html_url": "https://github.com/example/releases/tag/v0.3.0",
+            "published_at": "2026-07-31T00:00:00Z",
+            "assets": [
+                {
+                    "name": "DocSwift-v0.3.0-windows-portable.zip",
+                    "browser_download_url": "https://example.invalid/update.zip",
+                    "size": 123,
+                    "digest": f"sha256:{'c' * 64}",
+                }
+            ],
+        }
+
+        def response(url: str, *_args, **_kwargs) -> bytes:
+            if url == manifest_url:
+                raise UpdateError("内部服务器离线")
+            return json.dumps(github_payload).encode("utf-8")
+
+        with patch("update_service._request_bytes", side_effect=response):
+            info = UpdateService(
+                "example/repo",
+                manifest_url=manifest_url,
+            ).check("0.2.0")
+
+        self.assertIsNotNone(info)
+        assert info is not None
+        self.assertEqual("GitHub 备用源", info.source)
+
+    def test_internal_manifest_rejects_untrusted_download_url(self) -> None:
+        manifest_url = (
+            "http://192.168.100.3/updates/docswift/latest.json"
+        )
+        payload = {
+            "manifest_version": 1,
+            "application": "DocSwift",
+            "version": "0.3.0",
+            "download_url": (
+                "http://example.invalid/DocSwift-v0.3.0-windows-portable.zip"
+            ),
+            "sha256": "d" * 64,
+            "size": 123,
+        }
+        github_error = UpdateError("公网不可用")
+        with patch(
+            "update_service._request_bytes",
+            side_effect=[
+                json.dumps(payload).encode("utf-8"),
+                github_error,
+            ],
+        ):
+            with self.assertRaisesRegex(
+                UpdateError,
+                "公司服务器.*受信任目录.*GitHub",
+            ):
+                UpdateService(
+                    "example/repo",
+                    manifest_url=manifest_url,
+                ).check("0.2.0")
 
 
 if __name__ == "__main__":

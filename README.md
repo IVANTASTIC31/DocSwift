@@ -21,10 +21,12 @@ python -m venv .venv
 
 ## 检查更新
 
-顶部“检查更新”会连接公开的 GitHub Release：
+顶部“检查更新”会优先连接公司内部更新服务器，无法连接时再使用公开的 GitHub Release：
 
-- 当前程序版本为 `v0.2.0`。
+- 当前程序版本为 `v0.2.1`。
 - 检查和下载在后台执行，不会卡住校对界面。
+- 公司内部版本清单地址为 `http://192.168.100.3/updates/docswift/latest.json`。
+- 内部服务器明确返回当前版本时，不会越过内部发布策略查询公网版本。
 - 只接受名称为 `DocSwift-v版本号-windows-portable.zip` 的正式包。
 - 下载前必须取得 SHA-256，下载后校验不一致会立即删除临时文件。
 - 当前源码运行版和免安装版均在下载后打开新版压缩包，由用户解压到新文件夹；任务数据位于 `%LOCALAPPDATA%\DocSwift`，不会随旧程序目录丢失。
@@ -138,7 +140,7 @@ python -m unittest discover -s tests -v
 然后执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\release\build_release.ps1 -Version 0.2.0
+powershell -ExecutionPolicy Bypass -File .\release\build_release.ps1 -Version 0.2.1
 ```
 
 将 `dist\release` 中生成的 zip 和 `CHECKSUMS-SHA256.TXT` 一并上传到同版本 GitHub Release，程序内更新按钮即可识别。

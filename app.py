@@ -1344,7 +1344,7 @@ class MainWindow(QMainWindow):
             return
         self.update_action.setEnabled(False)
         self.update_action.setText("正在检查更新…")
-        self.status_label.setText("正在连接 GitHub 检查正式版本…")
+        self.status_label.setText("正在连接公司服务器检查正式版本…")
         worker = FunctionWorker(lambda: self.update_service.check(__version__))
         worker.signals.finished.connect(
             self._update_check_finished,
@@ -1388,6 +1388,7 @@ class MainWindow(QMainWindow):
             else "未知"
         )
         dialog.setInformativeText(
+            f"更新来源：{info.source}\n"
             f"更新包：{info.asset.name}\n大小：{size_text}\n\n"
             "下载完成后会先校验 SHA-256，再打开压缩包。"
         )
@@ -1396,14 +1397,16 @@ class MainWindow(QMainWindow):
             "下载更新",
             QMessageBox.ButtonRole.AcceptRole,
         )
-        release_button = dialog.addButton(
-            "查看发布页",
-            QMessageBox.ButtonRole.ActionRole,
-        )
+        release_button = None
+        if info.release_url:
+            release_button = dialog.addButton(
+                "查看发布页",
+                QMessageBox.ButtonRole.ActionRole,
+            )
         dialog.addButton("暂不更新", QMessageBox.ButtonRole.RejectRole)
         dialog.exec()
         clicked = dialog.clickedButton()
-        if clicked is release_button:
+        if release_button is not None and clicked is release_button:
             QDesktopServices.openUrl(QUrl(info.release_url))
         elif clicked is download_button:
             self._download_update(info)

@@ -7,6 +7,23 @@ from project_store import ProjectStore
 
 
 class ProjectStoreTest(unittest.TestCase):
+    def test_interrupted_recognition_is_recovered_for_retry(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            card_path = directory / "B.1.docx"
+            card_path.write_bytes(b"placeholder")
+            second_path = directory / "B.2.docx"
+            second_path.write_bytes(b"placeholder")
+            with ProjectStore(directory / "docswift.db") as store:
+                task = store.get_or_create_active_task()
+                first, second = store.add_cards(task.id, [card_path, second_path])
+                store.update_card_status(first.id, CardStatus.RECOGNIZING)
+                store.update_card_status(second.id, CardStatus.QUEUED)
+                recovered = store.recover_interrupted_recognition()
+                self.assertEqual(2, recovered)
+                self.assertEqual(CardStatus.UNRECOGNIZED, store.get_card(first.id).status)
+                self.assertEqual(CardStatus.UNRECOGNIZED, store.get_card(second.id).status)
+
     def test_task_and_cards_are_restored_in_natural_order(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)

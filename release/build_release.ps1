@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.2"
+    [string]$Version = "0.3.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +11,8 @@ $PackageName = "DocSwift-v$Version-windows-portable"
 $PackageRoot = Join-Path $OutputRoot $PackageName
 $ArchivePath = Join-Path $OutputRoot "$PackageName.zip"
 $ChecksumsPath = Join-Path $OutputRoot "CHECKSUMS-SHA256.TXT"
+$IconPath = Join-Path $ProjectRoot "assets\docswift.ico"
+$IconPngPath = Join-Path $ProjectRoot "assets\docswift-icon.png"
 
 if ($Version -notmatch "^\d+\.\d+\.\d+$") {
     throw "Version must use the 1.2.3 format."
@@ -38,6 +40,8 @@ New-Item -ItemType Directory -Path $WorkRoot -Force | Out-Null
     --windowed `
     --onedir `
     --name DocSwift `
+    --icon $IconPath `
+    --add-data "$IconPngPath;assets" `
     --distpath (Join-Path $WorkRoot "dist") `
     --workpath (Join-Path $WorkRoot "work") `
     --specpath $WorkRoot `

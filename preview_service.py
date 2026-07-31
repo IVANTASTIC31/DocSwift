@@ -270,7 +270,6 @@ def _render_docx_with_com(
                 command,
                 capture_output=True,
                 env=environment,
-                text=True,
                 timeout=120,
                 check=False,
                 **_hidden_subprocess_options(),

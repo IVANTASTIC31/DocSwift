@@ -7,6 +7,7 @@ from pathlib import Path
 
 class CardStatus(str, Enum):
     UNRECOGNIZED = "unrecognized"
+    QUEUED = "queued"
     RECOGNIZING = "recognizing"
     PENDING = "pending"
     CONFIRMED = "confirmed"
@@ -18,6 +19,7 @@ class CardStatus(str, Enum):
     def label(self) -> str:
         return {
             CardStatus.UNRECOGNIZED: "未识别",
+            CardStatus.QUEUED: "待识别",
             CardStatus.RECOGNIZING: "识别中",
             CardStatus.PENDING: "待确认",
             CardStatus.CONFIRMED: "已确认",

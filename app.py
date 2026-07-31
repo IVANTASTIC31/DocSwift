@@ -1,10 +1,139 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
+import ctypes
+import logging
 from pathlib import Path
 import sys
+import threading
 import traceback
 from typing import Callable, Sequence
+
+
+_EARLY_MUTEX_HANDLE: int | None = None
+_EARLY_SPLASH: _EarlyWindowsSplash | None = None
+
+
+def _acquire_early_windows_mutex() -> bool:
+    """Reject repeated launches before importing the relatively heavy Qt stack."""
+    global _EARLY_MUTEX_HANDLE
+    if sys.platform != "win32":
+        return True
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel32.CreateMutexW(None, False, "Local\\DocSwift.SingleInstance")
+    if not handle:
+        return True
+    _EARLY_MUTEX_HANDLE = int(handle)
+    if kernel32.GetLastError() != 183:  # ERROR_ALREADY_EXISTS
+        return True
+    ctypes.windll.user32.MessageBoxW(
+        None,
+        "DocSwift 已经在启动或运行，请不要重复点击。",
+        "DocSwift",
+        0x40,
+    )
+    return False
+
+
+class _EarlyWindowsSplash:
+    """Small native window that appears before importing PySide6."""
+
+    def __init__(self) -> None:
+        self._ready = threading.Event()
+        self._thread_id = 0
+        self._window_handle = 0
+        self._thread = threading.Thread(
+            target=self._run,
+            name="startup-splash",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        if sys.platform == "win32":
+            self._thread.start()
+            self._ready.wait(timeout=2)
+
+    def close(self) -> None:
+        if sys.platform != "win32":
+            return
+        user32 = ctypes.windll.user32
+        if self._window_handle:
+            user32.PostMessageW(
+                ctypes.c_void_p(self._window_handle), 0x0010, 0, 0
+            )  # WM_CLOSE
+        if self._thread_id:
+            user32.PostThreadMessageW(self._thread_id, 0x0012, 0, 0)  # WM_QUIT
+
+    def _run(self) -> None:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        gdi32 = ctypes.windll.gdi32
+        self._thread_id = int(kernel32.GetCurrentThreadId())
+
+        width, height = 560, 280
+        left = max(0, (user32.GetSystemMetrics(0) - width) // 2)
+        top = max(0, (user32.GetSystemMetrics(1) - height) // 2)
+        style = 0x80000000 | 0x10000000 | 0x00800000 | 0x00000001 | 0x00000200
+        extended_style = 0x00000008 | 0x00000080
+        user32.CreateWindowExW.restype = ctypes.c_void_p
+        kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+        gdi32.CreateFontW.restype = ctypes.c_void_p
+        handle = user32.CreateWindowExW(
+            extended_style,
+            "STATIC",
+            "DocSwift\r\n\r\n工艺卡转工艺路线\r\n\r\n正在启动，请勿重复点击…",
+            style,
+            left,
+            top,
+            width,
+            height,
+            None,
+            None,
+            kernel32.GetModuleHandleW(None),
+            None,
+        )
+        self._window_handle = int(handle or 0)
+        if self._window_handle:
+            font = gdi32.CreateFontW(
+                24,
+                0,
+                0,
+                0,
+                600,
+                0,
+                0,
+                0,
+                134,
+                0,
+                0,
+                5,
+                0,
+                "Microsoft YaHei",
+            )
+            native_handle = ctypes.c_void_p(self._window_handle)
+            user32.SendMessageW(
+                native_handle, 0x0030, ctypes.c_void_p(font), 1
+            )  # WM_SETFONT
+            user32.ShowWindow(native_handle, 5)
+            user32.UpdateWindow(native_handle)
+        self._ready.set()
+
+        message = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(message))
+            user32.DispatchMessageW(ctypes.byref(message))
+
+
+if __name__ == "__main__":
+    if not _acquire_early_windows_mutex():
+        raise SystemExit(0)
+    if not any(option in sys.argv for option in ("--card", "--template", "--output")):
+        _EARLY_SPLASH = _EarlyWindowsSplash()
+        _EARLY_SPLASH.start()
 
 from PySide6.QtCore import (
     QLockFile,
@@ -22,6 +151,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QIcon,
     QPalette,
 )
 from PySide6.QtPdf import QPdfDocument
@@ -67,14 +197,32 @@ from preview_service import (
     prepare_preview,
 )
 from project_store import ProjectStore, default_database_path
-from services import RecognitionPayload, export_confirmed_cards, recognize_docx
+from logging_config import (
+    configure_logging,
+    default_log_directory,
+    default_log_path,
+    install_exception_hook,
+)
+from services import (
+    RecognitionResult,
+    export_confirmed_cards,
+    recognize_docx_complete,
+)
 from update_service import PreparedUpdate, UpdateError, UpdateInfo, UpdateService
 
 
 APP_TITLE = "DocSwift 工艺卡转工艺路线"
+LOGGER = logging.getLogger("docswift.app")
+
+
+def bundled_asset_path(relative_path: str) -> Path:
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base_path / relative_path
+
 
 STATUS_COLORS = {
     CardStatus.UNRECOGNIZED: ("#64748B", "#F1F5F9"),
+    CardStatus.QUEUED: ("#6D28D9", "#EDE9FE"),
     CardStatus.RECOGNIZING: ("#1D4ED8", "#DBEAFE"),
     CardStatus.PENDING: ("#B45309", "#FEF3C7"),
     CardStatus.CONFIRMED: ("#047857", "#D1FAE5"),
@@ -99,7 +247,9 @@ class FunctionWorker(QRunnable):
         try:
             result = self.function()
         except Exception:
-            self.signals.failed.emit(traceback.format_exc())
+            error = traceback.format_exc()
+            LOGGER.error("后台任务失败\n%s", error)
+            self.signals.failed.emit(error)
         else:
             self.signals.finished.emit(result)
 
@@ -258,11 +408,16 @@ class MainWindow(QMainWindow):
     def __init__(self, database_path: str | Path | None = None) -> None:
         super().__init__()
         self.store = ProjectStore(database_path)
+        recovered_jobs = self.store.recover_interrupted_recognition()
         self.task = self.store.get_or_create_active_task()
         self.current_card_id: int | None = None
         self.preview_by_card: dict[int, PreviewResult] = {}
+        self.preview_workers: dict[int, FunctionWorker] = {}
+        self.recognition_queue: deque[int] = deque()
+        self.active_recognition_card_id: int | None = None
         self.recognizing_cards: set[int] = set()
         self.card_workers: dict[int, FunctionWorker] = {}
+        self._closing = False
         self.export_worker: FunctionWorker | None = None
         self.update_worker: FunctionWorker | None = None
         self.update_service = UpdateService()
@@ -282,8 +437,22 @@ class MainWindow(QMainWindow):
         self.source_timer.setInterval(5000)
         self.source_timer.timeout.connect(self._poll_source_changes)
         self.source_timer.start()
+        LOGGER.info(
+            "主窗口已启动 version=%s database=%s task_id=%s recovered_jobs=%s",
+            __version__,
+            self.store.database_path,
+            self.task.id,
+            recovered_jobs,
+        )
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._closing = True
+        self.recognition_queue.clear()
+        LOGGER.info(
+            "正在关闭 queue=%s active=%s",
+            len(self.recognition_queue),
+            self.active_recognition_card_id,
+        )
         self.source_timer.stop()
         self.pdf_view.setDocument(None)
         self.pdf_document.close()
@@ -295,10 +464,6 @@ class MainWindow(QMainWindow):
         self.new_task_action.triggered.connect(self._new_task)
         self.history_action = QAction("历史任务", self)
         self.history_action.triggered.connect(self._open_history)
-        self.add_cards_action = QAction("添加工艺卡", self)
-        self.add_cards_action.triggered.connect(self._add_cards)
-        self.add_folder_action = QAction("添加文件夹", self)
-        self.add_folder_action.triggered.connect(self._add_folder)
         self.recognize_action = QAction("识别所选", self)
         self.recognize_action.triggered.connect(self._recognize_selected)
         self.recognize_all_action = QAction("识别全部未识别", self)
@@ -312,6 +477,8 @@ class MainWindow(QMainWindow):
         self.update_action = QAction("检查更新", self)
         self.update_action.setToolTip(f"当前版本：v{__version__}")
         self.update_action.triggered.connect(self._check_for_updates)
+        self.logs_action = QAction("查看日志", self)
+        self.logs_action.triggered.connect(self._show_logs)
 
     def _build_ui(self) -> None:
         toolbar = QToolBar("主工具栏")
@@ -319,9 +486,6 @@ class MainWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         toolbar.addAction(self.new_task_action)
         toolbar.addAction(self.history_action)
-        toolbar.addSeparator()
-        toolbar.addAction(self.add_cards_action)
-        toolbar.addAction(self.add_folder_action)
         toolbar.addSeparator()
         toolbar.addAction(self.recognize_action)
         recognize_menu_button = QToolButton()
@@ -342,6 +506,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.clear_action)
         toolbar.addSeparator()
         toolbar.addAction(self.update_action)
+        toolbar.addAction(self.logs_action)
         self.addToolBar(toolbar)
 
         central = QWidget()
@@ -422,6 +587,8 @@ class MainWindow(QMainWindow):
         folder_button = QPushButton("添加文件夹")
         folder_button.clicked.connect(self._add_folder)
         remove_button = QPushButton("移除")
+        remove_button.setObjectName("dangerButton")
+        remove_button.setToolTip("从当前任务移除所选工艺卡，不会删除原始 Word 文件。")
         remove_button.clicked.connect(self._remove_selected_cards)
         button_layout.addWidget(add_button)
         button_layout.addWidget(folder_button)
@@ -595,6 +762,11 @@ class MainWindow(QMainWindow):
             }
             QPushButton#primaryButton { background: #2563EB; color: white; border-color: #2563EB; }
             QPushButton#primaryButton:hover { background: #1D4ED8; }
+            QPushButton#dangerButton {
+                background: #DC2626; color: white; border-color: #DC2626;
+            }
+            QPushButton#dangerButton:hover { background: #B91C1C; border-color: #B91C1C; }
+            QPushButton#dangerButton:pressed { background: #991B1B; border-color: #991B1B; }
             QFrame#taskBar, QFrame#sidePanel, QFrame#contentPanel {
                 background: white; border: 1px solid #DCE3ED; border-radius: 7px;
             }
@@ -674,6 +846,7 @@ class MainWindow(QMainWindow):
             self.card_tree.setCurrentItem(selected_item)
         self.card_count_label.setText(f"{len(cards)} 张")
         self.summary_label.setText(
+            f"处理中 {counts[CardStatus.QUEUED] + counts[CardStatus.RECOGNIZING]}　"
             f"待确认 {counts[CardStatus.PENDING]}　"
             f"已确认 {counts[CardStatus.CONFIRMED]}　"
             f"已导出 {counts[CardStatus.EXPORTED]}"
@@ -728,7 +901,12 @@ class MainWindow(QMainWindow):
             self.operations_table.setRowHeight(
                 row_index, min(120, max(38, 22 * (operation.content.count("\n") + 1)))
             )
-        locked = card.status in (CardStatus.EXPORTED, CardStatus.SOURCE_CHANGED)
+        locked = card.status in (
+            CardStatus.QUEUED,
+            CardStatus.RECOGNIZING,
+            CardStatus.EXPORTED,
+            CardStatus.SOURCE_CHANGED,
+        )
         self.operations_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
             if locked
@@ -812,6 +990,7 @@ class MainWindow(QMainWindow):
             return
         self._refresh_cards(select_card_id=added[0].id)
         self.status_label.setText(f"已添加 {len(added)} 张工艺卡")
+        LOGGER.info("添加工艺卡 task_id=%s count=%s", self.task.id, len(added))
         if self.task.auto_recognize:
             self._start_recognition([card.id for card in added])
 
@@ -819,18 +998,45 @@ class MainWindow(QMainWindow):
         card_ids = self._selected_card_ids()
         if not card_ids:
             return
+        cards = []
+        for card_id in card_ids:
+            try:
+                cards.append(self.store.get_card(card_id))
+            except KeyError:
+                continue
+        exported_count = sum(card.status == CardStatus.EXPORTED for card in cards)
+        confirmed_count = sum(card.status == CardStatus.CONFIRMED for card in cards)
+        warning_lines = ["原始 Word 文件不会被删除。"]
+        if confirmed_count:
+            warning_lines.append(f"其中 {confirmed_count} 张已经确认，校对结果会一并移除。")
+        if exported_count:
+            warning_lines.append(
+                f"其中 {exported_count} 张已经导出；只移除任务记录，不会修改已生成的 Excel。"
+            )
         if (
             QMessageBox.question(
                 self,
                 APP_TITLE,
                 f"确定从当前任务移除 {len(card_ids)} 张工艺卡吗？\n"
-                "原始 Word 文件不会被删除。",
+                + "\n".join(warning_lines),
             )
             != QMessageBox.StandardButton.Yes
         ):
             return
+        removed = set(card_ids)
+        self.recognition_queue = deque(
+            card_id for card_id in self.recognition_queue if card_id not in removed
+        )
         for card_id in card_ids:
+            self.recognizing_cards.discard(card_id)
+            self.preview_by_card.pop(card_id, None)
             self.store.remove_card(card_id)
+        LOGGER.info(
+            "移除工艺卡 task_id=%s card_ids=%s active=%s",
+            self.task.id,
+            card_ids,
+            self.active_recognition_card_id,
+        )
         self.current_card_id = None
         self._refresh_cards()
         self._clear_card_details()
@@ -886,9 +1092,44 @@ class MainWindow(QMainWindow):
             except KeyError:
                 continue
             self.recognizing_cards.add(card_id)
+            self.store.update_card_status(card_id, CardStatus.QUEUED)
+            self.recognition_queue.append(card_id)
+            queued += 1
+        if queued:
+            LOGGER.info(
+                "加入识别队列 task_id=%s added=%s queue=%s",
+                self.task.id,
+                queued,
+                list(self.recognition_queue),
+            )
+            self.status_label.setText(f"已加入识别队列 {queued} 张工艺卡")
+            self._refresh_cards()
+            self._start_next_recognition(exclusions)
+
+    def _start_next_recognition(
+        self,
+        exclusions: Sequence[str] | None = None,
+    ) -> None:
+        if self.active_recognition_card_id is not None:
+            return
+        while self.recognition_queue:
+            card_id = self.recognition_queue.popleft()
+            try:
+                card = self.store.get_card(card_id)
+            except KeyError:
+                self.recognizing_cards.discard(card_id)
+                continue
+            terms = (
+                list(exclusions)
+                if exclusions is not None
+                else self.store.enabled_exclusion_terms()
+            )
+            self.active_recognition_card_id = card_id
             self.store.update_card_status(card_id, CardStatus.RECOGNIZING)
             worker = FunctionWorker(
-                lambda path=card.source_path, terms=exclusions: recognize_docx(path, terms)
+                lambda path=card.source_path, excluded=terms: recognize_docx_complete(
+                    path, excluded
+                )
             )
             worker.signals.finished.connect(
                 lambda result, target_id=card_id: self._recognition_finished(
@@ -904,20 +1145,35 @@ class MainWindow(QMainWindow):
             )
             self.card_workers[card_id] = worker
             self.thread_pool.start(worker)
-            queued += 1
-        if queued:
-            self.status_label.setText(f"正在识别 {queued} 张工艺卡…")
-            self._refresh_cards()
+            LOGGER.info(
+                "开始识别 card_id=%s file=%s remaining=%s",
+                card_id,
+                card.display_name,
+                len(self.recognition_queue),
+            )
+            self.status_label.setText(
+                f"后台识别：{card.display_name}（后面还有 {len(self.recognition_queue)} 张）"
+            )
+            self._refresh_cards(select_card_id=self.current_card_id)
+            return
 
     def _recognition_finished(
         self,
         card_id: int,
-        payload: RecognitionPayload,
+        result: object,
     ) -> None:
+        if self._closing:
+            self.card_workers.pop(card_id, None)
+            return
+        self.active_recognition_card_id = None
         self.recognizing_cards.discard(card_id)
         self.card_workers.pop(card_id, None)
+        if not isinstance(result, RecognitionResult):
+            self._recognition_failed(card_id, "识别服务返回了未知结果。")
+            return
+        payload = result.payload
         try:
-            card = self.store.get_card(card_id)
+            self.store.get_card(card_id)
             self.store.replace_recognition(
                 card_id,
                 route_no=payload.route_no,
@@ -926,32 +1182,21 @@ class MainWindow(QMainWindow):
                 original_snapshot=payload.original_snapshot,
                 excluded_snapshot=payload.excluded_snapshot,
             )
-            pages = locate_docx_content_pages(
-                card.source_path,
-                [str(operation["content"]) for operation in payload.operations],
-                [
-                    str(operation["operation_no"])
-                    for operation in payload.operations
-                ],
-                [str(operation["work_type"]) for operation in payload.operations],
-            )
-            operations = self.store.list_operations(card_id)
-            for operation, page_range in zip(operations, pages):
-                self.store.update_operation(
-                    operation.id,
-                    source_page_start=page_range[0],
-                    source_page_end=page_range[1],
-                    update_pages=True,
-                )
+        except KeyError:
+            LOGGER.info("识别完成时工艺卡已被移除 card_id=%s", card_id)
+            self._start_next_recognition()
+            return
         except Exception as exc:
             self._recognition_failed(card_id, str(exc))
             return
-        try:
-            preview = prepare_preview(card.source_path)
-        except Exception as exc:
-            preview = None
+        preview = result.preview
+        if result.preview_error:
             self.preview_hint_label.setText("预览生成失败，可继续校对和导出")
-            self.status_label.setText(str(exc))
+            LOGGER.warning(
+                "识别成功但预览或来源页定位失败 card_id=%s error=%s",
+                card_id,
+                result.preview_error,
+            )
         if preview is not None:
             self.preview_by_card[card_id] = preview
         self._refresh_cards(select_card_id=card_id if self.current_card_id == card_id else None)
@@ -959,9 +1204,26 @@ class MainWindow(QMainWindow):
             self._load_card_details(card_id)
             if preview is not None:
                 self._load_preview(card_id, preview)
-        self.status_label.setText("识别完成，等待人工确认")
+        LOGGER.info(
+            "识别完成 card_id=%s operations=%s preview=%s",
+            card_id,
+            len(payload.operations),
+            preview is not None,
+        )
+        if self.recognition_queue:
+            self.status_label.setText(
+                f"已完成 1 张，继续处理队列中 {len(self.recognition_queue)} 张"
+            )
+        else:
+            self.status_label.setText("识别完成，等待人工确认")
+        self._start_next_recognition()
 
     def _recognition_failed(self, card_id: int, error: str) -> None:
+        if self._closing:
+            self.card_workers.pop(card_id, None)
+            return
+        if self.active_recognition_card_id == card_id:
+            self.active_recognition_card_id = None
         self.recognizing_cards.discard(card_id)
         self.card_workers.pop(card_id, None)
         short_error = error.strip().splitlines()[-1] if error.strip() else "未知错误"
@@ -972,11 +1234,14 @@ class MainWindow(QMainWindow):
                 error_message=short_error,
             )
         except KeyError:
+            self._start_next_recognition()
             return
         self._refresh_cards(select_card_id=card_id if self.current_card_id == card_id else None)
         if self.current_card_id == card_id:
             self._load_card_details(card_id)
         self.status_label.setText(f"识别失败：{short_error}")
+        LOGGER.error("识别失败 card_id=%s error=%s", card_id, short_error)
+        self._start_next_recognition()
 
     def _ensure_preview(self, card_id: int) -> None:
         cached = self.preview_by_card.get(card_id)
@@ -987,32 +1252,38 @@ class MainWindow(QMainWindow):
         if not card.source_path.exists():
             self.preview_hint_label.setText("源文件不存在")
             return
-        self.preview_hint_label.setText("正在生成本地预览…")
-        try:
-            preview = prepare_preview(card.source_path)
-        except Exception as exc:
-            self.preview_hint_label.setText("预览生成失败，可继续识别和导出")
-            self.status_label.setText(str(exc))
+        if card_id in self.preview_workers:
+            self.preview_hint_label.setText("正在后台生成本地预览…")
             return
-        self.preview_by_card[card_id] = preview
-        operations = self.store.list_operations(card_id)
-        if operations:
-            pages = locate_docx_content_pages(
-                card.source_path,
-                [operation.content for operation in operations],
-                [operation.operation_no for operation in operations],
-                [operation.work_type for operation in operations],
-            )
-            for operation, page_range in zip(operations, pages):
-                self.store.update_operation(
-                    operation.id,
-                    source_page_start=page_range[0],
-                    source_page_end=page_range[1],
-                    update_pages=True,
-                )
-            if self.current_card_id == card_id:
-                self._load_card_details(card_id)
-        self._load_preview(card_id, preview)
+        self.preview_hint_label.setText("正在生成本地预览…")
+        worker = FunctionWorker(lambda path=card.source_path: prepare_preview(path))
+        worker.signals.finished.connect(
+            lambda result, target_id=card_id: self._preview_finished(target_id, result),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        worker.signals.failed.connect(
+            lambda error, target_id=card_id: self._preview_failed(target_id, error),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.preview_workers[card_id] = worker
+        self.thread_pool.start(worker)
+
+    def _preview_finished(self, card_id: int, result: object) -> None:
+        self.preview_workers.pop(card_id, None)
+        if not isinstance(result, PreviewResult):
+            self._preview_failed(card_id, "预览服务返回了未知结果。")
+            return
+        self.preview_by_card[card_id] = result
+        if self.current_card_id == card_id:
+            self._load_preview(card_id, result)
+
+    def _preview_failed(self, card_id: int, error: str) -> None:
+        self.preview_workers.pop(card_id, None)
+        short_error = error.strip().splitlines()[-1] if error.strip() else "未知错误"
+        LOGGER.warning("预览生成失败 card_id=%s error=%s", card_id, short_error)
+        if self.current_card_id == card_id:
+            self.preview_hint_label.setText("预览生成失败，可继续识别和导出")
+            self.status_label.setText(short_error)
 
     def _load_preview(self, card_id: int, preview: PreviewResult) -> None:
         if self.current_card_id != card_id:
@@ -1320,6 +1591,13 @@ class MainWindow(QMainWindow):
         self.status_label.setText(
             f"导出成功：{len(card_ids)} 张工艺卡，共 {row_count} 行"
         )
+        LOGGER.info(
+            "导出成功 task_id=%s cards=%s rows=%s output=%s",
+            self.task.id,
+            len(card_ids),
+            row_count,
+            output_path,
+        )
         QMessageBox.information(
             self,
             APP_TITLE,
@@ -1332,6 +1610,7 @@ class MainWindow(QMainWindow):
         self.export_action.setEnabled(True)
         short_error = error.strip().splitlines()[-1]
         self.status_label.setText(f"导出失败：{short_error}")
+        LOGGER.error("导出失败 task_id=%s error=%s", self.task.id, short_error)
         QMessageBox.critical(
             self,
             APP_TITLE,
@@ -1491,7 +1770,52 @@ class MainWindow(QMainWindow):
 
     def _show_update_error(self, message: str) -> None:
         self.status_label.setText(f"更新失败：{message}")
+        LOGGER.error("更新失败 error=%s", message)
         QMessageBox.warning(self, "更新失败", message)
+
+    def _show_logs(self) -> None:
+        log_path = default_log_path()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("DocSwift 运行日志")
+        dialog.resize(920, 620)
+        layout = QVBoxLayout(dialog)
+        path_label = QLabel(f"日志文件：{log_path}")
+        path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(path_label)
+
+        editor = QPlainTextEdit()
+        editor.setReadOnly(True)
+        editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        editor.setFont(QFont("Consolas", 10))
+        try:
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            editor.setPlainText("\n".join(lines[-2000:]))
+            cursor = editor.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            editor.setTextCursor(cursor)
+        except OSError as exc:
+            editor.setPlainText(f"暂时无法读取日志：{exc}")
+        layout.addWidget(editor, 1)
+
+        button_layout = QHBoxLayout()
+        open_folder_button = QPushButton("打开日志目录")
+        open_folder_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(default_log_directory()))
+            )
+        )
+        copy_path_button = QPushButton("复制日志路径")
+        copy_path_button.clicked.connect(
+            lambda: QApplication.clipboard().setText(str(log_path))
+        )
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(dialog.accept)
+        button_layout.addWidget(open_folder_button)
+        button_layout.addWidget(copy_path_button)
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+        dialog.exec()
 
     def _manage_rules(self) -> None:
         ExclusionRulesDialog(self.store, self).exec()
@@ -1624,6 +1948,9 @@ def apply_light_palette(application: QApplication) -> None:
 
 
 def main() -> None:
+    log_path = configure_logging()
+    install_exception_hook()
+    LOGGER.info("启动 DocSwift version=%s argv=%s log=%s", __version__, sys.argv, log_path)
     args = parse_args()
     if args.card or args.template or args.output:
         if not (args.card and args.template and args.output):
@@ -1636,6 +1963,7 @@ def main() -> None:
     application = QApplication(sys.argv)
     application.setApplicationName(APP_TITLE)
     application.setApplicationVersion(__version__)
+    application.setWindowIcon(QIcon(str(bundled_asset_path("assets/docswift-icon.png"))))
     apply_light_palette(application)
     lock_path = default_database_path().with_suffix(".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1650,6 +1978,8 @@ def main() -> None:
         return
     window = MainWindow()
     window.show()
+    if _EARLY_SPLASH is not None:
+        _EARLY_SPLASH.close()
     if args.update_success_marker is not None:
         try:
             args.update_success_marker.parent.mkdir(parents=True, exist_ok=True)

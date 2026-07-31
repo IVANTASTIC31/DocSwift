@@ -24,6 +24,10 @@ dist/
 *.db-shm
 *.db-wal
 
+# Versioned application artwork
+!assets/
+!assets/docswift-icon.png
+
 # OS and editor files
 .DS_Store
 Thumbs.db

@@ -458,6 +458,24 @@ class ProjectStore:
             )
         return self.get_card(card_id)
 
+    def recover_interrupted_recognition(self) -> int:
+        """Put jobs interrupted by a previous shutdown back into a retryable state."""
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE cards
+                SET status = ?, error_message = '', updated_at = ?
+                WHERE status IN (?, ?)
+                """,
+                (
+                    CardStatus.UNRECOGNIZED.value,
+                    utc_now(),
+                    CardStatus.QUEUED.value,
+                    CardStatus.RECOGNIZING.value,
+                ),
+            )
+        return max(0, cursor.rowcount)
+
     def update_card_identity(
         self, card_id: int, *, route_no: str | None = None, route_name: str | None = None
     ) -> CardRecord:

@@ -1,7 +1,7 @@
 param(
-    [string]$Version = "0.2.2",
+    [string]$Version = "0.3.0",
     [string]$BaseUrl = "http://192.168.100.3/updates/docswift",
-    [string]$Notes = "DocSwift v0.2.2: automatic internal update, safe extraction, in-place replacement, restart, and rollback."
+    [string]$Notes = "DocSwift v0.3.0: startup feedback, rotating logs, background recognition queue, safer card removal, streamlined controls, and a new application icon."
 )
 
 $ErrorActionPreference = "Stop"

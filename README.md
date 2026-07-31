@@ -15,15 +15,20 @@ python -m venv .venv
 
 随后双击 `run.bat` 启动。脚本会优先使用项目 `.venv` 中的 `pythonw.exe`，界面启动后不会在背后保留命令行窗口。双击 `DocSwift.vbs` 可完全不显示终端。
 
-程序带有单实例保护，重复双击不会同时打开两套任务数据库。
+程序带有提前单实例保护，重复双击不会同时打开两套任务数据库。免安装版在
+Qt 组件加载前就会显示启动等待画面，主窗口恢复任务期间继续显示进度提示，
+避免用户因启动延迟反复点击。
 
 需要排查问题时，可以在命令行执行 `run.bat --console`，保留终端并显示完整错误。
+程序同时把启动、识别、导出、更新和未捕获异常写入
+`%LOCALAPPDATA%\DocSwift\logs\docswift.log`。顶部“查看日志”可以直接查看最近
+记录并打开日志目录；日志按 2 MB 自动轮换，最多保留 5 份历史文件。
 
 ## 检查更新
 
 顶部“检查更新”会优先连接公司内部更新服务器，无法连接时再使用公开的 GitHub Release：
 
-- 当前程序版本为 `v0.2.2`。
+- 当前程序版本为 `v0.3.0`。
 - 检查和下载在后台执行，不会卡住校对界面。
 - 公司内部版本清单地址为 `http://192.168.100.3/updates/docswift/latest.json`。
 - 内部服务器明确返回当前版本时，不会越过内部发布策略查询公网版本。
@@ -45,7 +50,13 @@ python -m venv .venv
 5. 点击“确认当前工艺卡”。
 6. 多张工艺卡确认后，点击“导出已确认工艺卡”。
 
-左侧状态会明确区分未识别、待确认、已确认和已导出，不再使用文件变暗记录。
+左侧状态会明确区分未识别、待识别、识别中、待确认、已确认和已导出，不再
+使用文件变暗记录。多张卡会进入后台单通道识别队列，解析、原版预览和来源页
+定位均不会占用界面主线程；当前卡识别时仍可查看或校对其他工艺卡。
+
+误添加的工艺卡可在左侧多选后点击红色“移除”。待识别项目会同时从队列取消；
+原始 Word 永远不会被删除。移除已确认项目会明确提示校对结果也将删除；移除
+已导出项目只删除任务记录，不会反向修改已经生成的 Excel。
 
 程序自动保存当前任务和人工修改，关闭后不会清空。下次启动自动恢复最后打开的任务。
 
@@ -132,18 +143,28 @@ python -m unittest discover -s tests -v
 %LOCALAPPDATA%\DocSwift
 ```
 
-## 发布维护
+## 一键发布
 
-发布 Windows 免安装版前，先安装构建工具：
+项目使用 `release\publish.ps1` 统一完成版本更新、测试、Windows 打包、Git
+提交与标签、公司 Gitea 发布版、Ubuntu 更新服务器上传及下载端校验。
 
-```bat
-.venv\Scripts\python -m pip install pyinstaller==6.16.0
-```
-
-然后执行：
+先进行无修改演练：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\release\build_release.ps1 -Version 0.2.1
+powershell -ExecutionPolicy Bypass -File .\release\publish.ps1 `
+  -Version 0.3.0 `
+  -NotesFile .\release\notes-v0.3.0.md `
+  -PlanOnly
 ```
 
-将 `dist\release` 中生成的 zip 和 `CHECKSUMS-SHA256.TXT` 一并上传到同版本 GitHub Release，程序内更新按钮即可识别。
+正式发布：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\release\publish.ps1 `
+  -Version 0.3.0 `
+  -NotesFile .\release\notes-v0.3.0.md
+```
+
+脚本只推送 `company`，不会推送 GitHub 或 Gitee。首次使用前需要配置 SSH
+密钥、更新目录权限和 `DOCSWIFT_GITEA_TOKEN`，完整说明见
+[release/ONE_CLICK_PUBLISH.md](release/ONE_CLICK_PUBLISH.md)。

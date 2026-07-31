@@ -13,6 +13,11 @@ from core import (
 )
 from domain import CardRecord, CardStatus, EditableOperation, TaskRecord
 from project_store import ProjectStore
+from preview_service import (
+    PreviewResult,
+    locate_docx_content_pages,
+    prepare_preview,
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +27,13 @@ class RecognitionPayload:
     operations: list[dict[str, object]]
     original_snapshot: list[dict[str, object]]
     excluded_snapshot: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class RecognitionResult:
+    payload: RecognitionPayload
+    preview: PreviewResult | None
+    preview_error: str = ""
 
 
 def recognize_docx(
@@ -47,6 +59,35 @@ def recognize_docx(
         operations=operations,
         original_snapshot=[asdict(operation) for operation in card.operations],
         excluded_snapshot=[asdict(operation) for operation in grouped.excluded],
+    )
+
+
+def recognize_docx_complete(
+    source_path: str | Path,
+    exclusion_terms: Sequence[str],
+) -> RecognitionResult:
+    """Run parsing, preview generation and source-page location off the UI thread."""
+    payload = recognize_docx(source_path, exclusion_terms)
+    preview: PreviewResult | None = None
+    preview_error = ""
+    try:
+        preview = prepare_preview(source_path)
+        pages = locate_docx_content_pages(
+            source_path,
+            [str(operation["content"]) for operation in payload.operations],
+            [str(operation["operation_no"]) for operation in payload.operations],
+            [str(operation["work_type"]) for operation in payload.operations],
+        )
+        for operation, page_range in zip(payload.operations, pages):
+            operation["source_page_start"] = page_range[0]
+            operation["source_page_end"] = page_range[1]
+    except Exception as exc:
+        # Preview/source-page failure must not discard otherwise valid recognition.
+        preview_error = str(exc)
+    return RecognitionResult(
+        payload=payload,
+        preview=preview,
+        preview_error=preview_error,
     )
 
 

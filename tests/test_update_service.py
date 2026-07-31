@@ -5,8 +5,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
+import zipfile
 
-from update_service import UpdateError, UpdateService, parse_version
+from update_service import (
+    PreparedUpdate,
+    ReleaseAsset,
+    UpdateError,
+    UpdateInfo,
+    UpdateService,
+    parse_version,
+)
 
 
 class FakeResponse(io.BytesIO):
@@ -15,6 +23,31 @@ class FakeResponse(io.BytesIO):
 
     def __exit__(self, *_args: object) -> None:
         self.close()
+
+
+def zip_bytes(files: dict[str, bytes]) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return output.getvalue()
+
+
+def update_info(archive: bytes) -> UpdateInfo:
+    return UpdateInfo(
+        version="0.3.0",
+        tag_name="v0.3.0",
+        notes="测试更新",
+        release_url="",
+        published_at="",
+        asset=ReleaseAsset(
+            name="DocSwift-v0.3.0-windows-portable.zip",
+            download_url="https://example.invalid/update.zip",
+            size=len(archive),
+            sha256=hashlib.sha256(archive).hexdigest(),
+        ),
+        source="测试源",
+    )
 
 
 class UpdateServiceTest(unittest.TestCase):
@@ -100,6 +133,144 @@ class UpdateServiceTest(unittest.TestCase):
             )
             self.assertEqual(archive, result.read_bytes())
             self.assertFalse(result.with_suffix(".zip.part").exists())
+
+    def test_download_prepares_portable_package(self) -> None:
+        archive = zip_bytes(
+            {
+                "DocSwift.exe": b"binary",
+                "_internal/library.bin": b"dependency",
+            }
+        )
+        with TemporaryDirectory() as temporary_directory, patch(
+            "update_service._open_url",
+            return_value=FakeResponse(archive),
+        ):
+            prepared = UpdateService().download_and_prepare(
+                update_info(archive),
+                Path(temporary_directory),
+            )
+
+            self.assertTrue(prepared.archive_path.is_file())
+            self.assertEqual(
+                b"binary",
+                (prepared.staging_directory / "DocSwift.exe").read_bytes(),
+            )
+            self.assertTrue(
+                (
+                    prepared.staging_directory
+                    / "_internal"
+                    / "library.bin"
+                ).is_file()
+            )
+
+    def test_safe_extract_rejects_parent_directory_member(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            archive_path = root / "unsafe.zip"
+            archive_path.write_bytes(zip_bytes({"../outside.txt": b"no"}))
+            with self.assertRaisesRegex(UpdateError, "不安全"):
+                UpdateService._extract_safely(
+                    archive_path,
+                    root / "staging",
+                )
+
+    def test_portable_installer_starts_hidden_helper(self) -> None:
+        archive = zip_bytes({"DocSwift.exe": b"new"})
+        info = update_info(archive)
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            target = root / "DocSwift"
+            target.mkdir()
+            executable = target / "DocSwift.exe"
+            executable.write_bytes(b"old")
+            staging = root / "staging"
+            staging.mkdir()
+            (staging / executable.name).write_bytes(b"new")
+            prepared = PreparedUpdate(
+                info,
+                root / info.asset.name,
+                staging,
+            )
+            calls: list[tuple[list[str], dict[str, object]]] = []
+
+            with (
+                patch.object(
+                    __import__("update_service").sys,
+                    "frozen",
+                    True,
+                    create=True,
+                ),
+                patch.object(
+                    __import__("update_service").sys,
+                    "executable",
+                    str(executable),
+                ),
+                patch(
+                    "update_service.subprocess.Popen",
+                    side_effect=lambda command, **kwargs: calls.append(
+                        (command, kwargs)
+                    ),
+                ),
+            ):
+                UpdateService().launch_portable_installer(
+                    prepared,
+                    root / "data",
+                )
+
+            self.assertTrue(calls)
+            command, options = calls[0]
+            self.assertEqual("powershell.exe", command[0])
+            self.assertIn("-OldPid", command)
+            self.assertIn("-Staging", command)
+            self.assertEqual(
+                str(root / "data" / "updates" / "installer"),
+                options["cwd"],
+            )
+            self.assertTrue(
+                (
+                    root
+                    / "data"
+                    / "updates"
+                    / "installer"
+                    / "apply-update.ps1"
+                ).is_file()
+            )
+
+    def test_portable_installer_protects_user_data(self) -> None:
+        archive = zip_bytes({"DocSwift.exe": b"new"})
+        info = update_info(archive)
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            target = root / "DocSwift"
+            target.mkdir()
+            executable = target / "DocSwift.exe"
+            executable.write_bytes(b"old")
+            staging = root / "staging"
+            staging.mkdir()
+            (staging / executable.name).write_bytes(b"new")
+            prepared = PreparedUpdate(
+                info,
+                root / info.asset.name,
+                staging,
+            )
+            with (
+                patch.object(
+                    __import__("update_service").sys,
+                    "frozen",
+                    True,
+                    create=True,
+                ),
+                patch.object(
+                    __import__("update_service").sys,
+                    "executable",
+                    str(executable),
+                ),
+            ):
+                with self.assertRaisesRegex(UpdateError, "任务数据库"):
+                    UpdateService().launch_portable_installer(
+                        prepared,
+                        target / "data",
+                    )
 
     def test_internal_manifest_is_preferred(self) -> None:
         manifest_url = (

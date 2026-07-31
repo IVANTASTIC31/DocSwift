@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.1"
+    [string]$Version = "0.2.2"
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,4 +67,4 @@ $Hash = (Get-FileHash -LiteralPath $ArchivePath -Algorithm SHA256).Hash.ToLowerI
 
 Write-Host "Release package: $ArchivePath" -ForegroundColor Green
 Write-Host "Checksums:      $ChecksumsPath" -ForegroundColor Green
-Write-Host "Upload both files to GitHub Release v$Version." -ForegroundColor Cyan
+Write-Host "Next: run release\\prepare_internal_manifest.ps1 -Version $Version." -ForegroundColor Cyan

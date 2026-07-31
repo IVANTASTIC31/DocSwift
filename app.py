@@ -68,7 +68,7 @@ from preview_service import (
 )
 from project_store import ProjectStore, default_database_path
 from services import RecognitionPayload, export_confirmed_cards, recognize_docx
-from update_service import UpdateInfo, UpdateService
+from update_service import PreparedUpdate, UpdateError, UpdateInfo, UpdateService
 
 
 APP_TITLE = "DocSwift 工艺卡转工艺路线"
@@ -1390,7 +1390,8 @@ class MainWindow(QMainWindow):
         dialog.setInformativeText(
             f"更新来源：{info.source}\n"
             f"更新包：{info.asset.name}\n大小：{size_text}\n\n"
-            "下载完成后会先校验 SHA-256，再打开压缩包。"
+            "下载完成后会校验 SHA-256 并安全解压。免安装版将自动关闭、"
+            "替换程序并重启；如果新版启动失败，会自动恢复旧版。"
         )
         dialog.setDetailedText(info.notes)
         download_button = dialog.addButton(
@@ -1417,7 +1418,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("正在下载并校验更新包，请保持网络连接…")
         update_root = default_database_path().parent / "updates"
         worker = FunctionWorker(
-            lambda: self.update_service.download(info, update_root)
+            lambda: self.update_service.download_and_prepare(info, update_root)
         )
         worker.signals.finished.connect(
             lambda path: self._update_download_finished(info, path),
@@ -1433,18 +1434,52 @@ class MainWindow(QMainWindow):
     def _update_download_finished(self, info: UpdateInfo, result: object) -> None:
         self.update_worker = None
         self.update_action.setEnabled(True)
-        archive_path = Path(str(result))
+        if not isinstance(result, PreparedUpdate):
+            self._show_update_error("更新服务返回了未知的安装结果。")
+            return
+        prepared = result
         self.update_action.setText(f"已下载 v{info.version}")
-        self.status_label.setText(f"更新包校验完成：{archive_path.name}")
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(archive_path)))
-        QMessageBox.information(
+        self.status_label.setText(f"更新包校验并解压完成：{prepared.archive_path.name}")
+
+        if not getattr(sys, "frozen", False):
+            QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(prepared.archive_path))
+            )
+            QMessageBox.information(
+                self,
+                "更新包已下载",
+                "当前是源码运行模式，不会自动覆盖项目文件。\n\n"
+                "更新包已经通过 SHA-256 校验并打开，请完整解压后运行新版。\n\n"
+                f"文件：{prepared.archive_path}",
+            )
+            return
+
+        answer = QMessageBox.question(
             self,
-            "更新包已下载",
-            "更新包已通过 SHA-256 校验并打开。\n\n"
-            "请关闭 DocSwift，把压缩包完整解压到一个新文件夹，"
-            "再运行新版。确认新版正常后，可删除旧文件夹。\n\n"
-            f"文件：{archive_path}",
+            "安装并重启",
+            f"DocSwift v{info.version} 已下载并校验完成。\n\n"
+            "现在将自动关闭程序、替换文件并重新启动。"
+            "未完成的校对内容已保存在任务数据库中，不会丢失。\n\n"
+            "如果新版无法正常启动，更新程序会自动恢复旧版。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
+        if answer != QMessageBox.StandardButton.Yes:
+            self.status_label.setText(
+                f"v{info.version} 已准备好，可再次点击“检查更新”安装"
+            )
+            return
+        try:
+            self.update_service.launch_portable_installer(
+                prepared,
+                default_database_path().parent,
+            )
+        except UpdateError as exc:
+            self._show_update_error(str(exc))
+            return
+        self.status_label.setText("正在关闭 DocSwift 并完成自动更新…")
+        self.update_action.setEnabled(False)
+        QTimer.singleShot(100, self.close)
 
     def _update_failed(self, error: str) -> None:
         self.update_worker = None
@@ -1543,6 +1578,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-row", type=int, default=2, help="写入起始行，默认 2")
     parser.add_argument("--append", action="store_true", help="追加到已有输出文件")
     parser.add_argument("--replace", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--update-success-marker",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -1610,6 +1650,12 @@ def main() -> None:
         return
     window = MainWindow()
     window.show()
+    if args.update_success_marker is not None:
+        try:
+            args.update_success_marker.parent.mkdir(parents=True, exist_ok=True)
+            args.update_success_marker.write_text("ok", encoding="ascii")
+        except OSError:
+            pass
     exit_code = application.exec()
     instance_lock.unlock()
     raise SystemExit(exit_code)

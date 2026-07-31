@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import ssl
+import subprocess
+import sys
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -14,6 +19,7 @@ from app_version import (
     RELEASE_ASSET_PREFIX,
     REPOSITORY,
 )
+from subprocess_visibility import hidden_window_options
 
 
 GENERIC_REQUEST_HEADERS = {
@@ -49,6 +55,13 @@ class UpdateInfo:
     published_at: str
     asset: ReleaseAsset
     source: str
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedUpdate:
+    info: UpdateInfo
+    archive_path: Path
+    staging_directory: Path
 
 
 def parse_version(value: str) -> tuple[int, int, int]:
@@ -323,3 +336,188 @@ class UpdateService:
             )
         partial_path.replace(archive_path)
         return archive_path
+
+    def download_and_prepare(self, info: UpdateInfo, root: Path) -> PreparedUpdate:
+        version_root = root / f"v{info.version}"
+        if version_root.exists():
+            shutil.rmtree(version_root)
+        version_root.mkdir(parents=True)
+        archive_path = self.download(info, root)
+        staging_directory = version_root / "staging"
+        self._extract_safely(archive_path, staging_directory)
+        if not (staging_directory / "DocSwift.exe").is_file():
+            raise UpdateError("免安装版更新包结构不正确，缺少 DocSwift.exe。")
+        return PreparedUpdate(info, archive_path, staging_directory)
+
+    @staticmethod
+    def _extract_safely(archive_path: Path, destination: Path) -> None:
+        destination.mkdir(parents=True, exist_ok=True)
+        destination_root = destination.resolve()
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                for member in archive.infolist():
+                    resolved = (destination / member.filename).resolve()
+                    if (
+                        resolved != destination_root
+                        and destination_root not in resolved.parents
+                    ):
+                        raise UpdateError(
+                            "更新包包含不安全的文件路径，已停止解压。"
+                        )
+                archive.extractall(destination)
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise UpdateError(f"无法解压更新包：{exc}") from exc
+
+    def launch_portable_installer(
+        self,
+        prepared: PreparedUpdate,
+        data_directory: Path,
+    ) -> None:
+        if not getattr(sys, "frozen", False):
+            raise UpdateError("当前是源码运行模式，不能自动覆盖项目文件。")
+
+        executable = Path(sys.executable).resolve()
+        target = executable.parent
+        staging = prepared.staging_directory.resolve()
+        data_directory = data_directory.resolve()
+        if not (staging / executable.name).is_file():
+            raise UpdateError("更新暂存目录中缺少 DocSwift.exe。")
+        if data_directory == target or target in data_directory.parents:
+            raise UpdateError(
+                "程序安装目录包含任务数据库。为避免误删用户数据，"
+                "当前安装位置不支持自动替换。"
+            )
+        try:
+            probe = target.parent / f".docswift-update-write-test-{os.getpid()}"
+            probe.write_text("ok", encoding="ascii")
+            probe.unlink()
+        except OSError as exc:
+            raise UpdateError("程序所在目录没有写入权限，无法自动更新。") from exc
+
+        updater_root = data_directory / "updates" / "installer"
+        updater_root.mkdir(parents=True, exist_ok=True)
+        script_path = updater_root / "apply-update.ps1"
+        marker_path = updater_root / "startup-success.marker"
+        log_path = updater_root / "update.log"
+        marker_path.unlink(missing_ok=True)
+        script_path.write_text(_POWERSHELL_UPDATER, encoding="utf-8-sig")
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+            "-OldPid",
+            str(os.getpid()),
+            "-Target",
+            str(target),
+            "-Staging",
+            str(staging),
+            "-ExecutableName",
+            executable.name,
+            "-Marker",
+            str(marker_path),
+            "-LogFile",
+            str(log_path),
+            "-CleanupDirectory",
+            str(prepared.archive_path.parent),
+        ]
+        try:
+            subprocess.Popen(
+                command,
+                cwd=str(updater_root),
+                close_fds=True,
+                **hidden_window_options(),
+            )
+        except OSError as exc:
+            raise UpdateError(f"无法启动更新辅助程序：{exc}") from exc
+
+
+_POWERSHELL_UPDATER = r"""
+param(
+    [Parameter(Mandatory=$true)][int]$OldPid,
+    [Parameter(Mandatory=$true)][string]$Target,
+    [Parameter(Mandatory=$true)][string]$Staging,
+    [Parameter(Mandatory=$true)][string]$ExecutableName,
+    [Parameter(Mandatory=$true)][string]$Marker,
+    [Parameter(Mandatory=$true)][string]$LogFile,
+    [Parameter(Mandatory=$true)][string]$CleanupDirectory
+)
+$ErrorActionPreference = "Stop"
+
+function Write-UpdateLog([string]$Message) {
+    $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $Message"
+    Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8
+}
+
+$backup = "$Target.previous"
+$newProcess = $null
+$backupCreated = $false
+try {
+    Write-UpdateLog "Waiting for application pid=$OldPid"
+    try { Wait-Process -Id $OldPid -Timeout 120 -ErrorAction SilentlyContinue } catch {}
+    if (Get-Process -Id $OldPid -ErrorAction SilentlyContinue) {
+        throw "旧程序在120秒内没有退出"
+    }
+    if (-not (Test-Path -LiteralPath $Staging -PathType Container)) {
+        throw "更新暂存目录不存在：$Staging"
+    }
+    if (Test-Path -LiteralPath $backup) {
+        Remove-Item -LiteralPath $backup -Recurse -Force
+    }
+    Move-Item -LiteralPath $Target -Destination $backup
+    $backupCreated = $true
+    Move-Item -LiteralPath $Staging -Destination $Target
+    Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
+    $newExe = Join-Path $Target $ExecutableName
+    $newProcess = Start-Process -FilePath $newExe -ArgumentList @("--update-success-marker", $Marker) -WorkingDirectory $Target -PassThru
+    Write-UpdateLog "Started new version pid=$($newProcess.Id)"
+
+    $ready = $false
+    for ($index = 0; $index -lt 120; $index++) {
+        if (Test-Path -LiteralPath $Marker -PathType Leaf) {
+            $ready = $true
+            break
+        }
+        if ($newProcess.HasExited) {
+            break
+        }
+        Start-Sleep -Milliseconds 500
+        $newProcess.Refresh()
+    }
+    if (-not $ready) {
+        throw "新版程序没有在60秒内完成启动确认"
+    }
+    Remove-Item -LiteralPath $backup -Recurse -Force
+    Remove-Item -LiteralPath $Marker -Force -ErrorAction SilentlyContinue
+    Write-UpdateLog "Update completed successfully"
+    if (Test-Path -LiteralPath $CleanupDirectory) {
+        Remove-Item -LiteralPath $CleanupDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    exit 0
+}
+catch {
+    Write-UpdateLog "Update failed: $($_.Exception.Message)"
+    try {
+        if ($newProcess -and -not $newProcess.HasExited) {
+            Stop-Process -Id $newProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        if ($backupCreated -and (Test-Path -LiteralPath $backup)) {
+            if (Test-Path -LiteralPath $Target) {
+                Remove-Item -LiteralPath $Target -Recurse -Force
+            }
+            Move-Item -LiteralPath $backup -Destination $Target
+            $oldExe = Join-Path $Target $ExecutableName
+            Start-Process -FilePath $oldExe -WorkingDirectory $Target
+            Write-UpdateLog "Previous version restored and restarted"
+        } else {
+            Write-UpdateLog "Old installation was not moved; no rollback needed"
+        }
+    }
+    catch {
+        Write-UpdateLog "Rollback failed: $($_.Exception.Message)"
+    }
+    exit 1
+}
+""".strip()

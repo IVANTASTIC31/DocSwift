@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 REPOSITORY = "IVANTASTIC31/DocSwift"
 RELEASE_ASSET_PREFIX = "DocSwift"
 INTERNAL_UPDATE_MANIFEST_URL = (

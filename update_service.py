@@ -106,7 +106,7 @@ def _request_bytes(
 
 def _decode_json(data: bytes) -> dict[str, object]:
     try:
-        payload = json.loads(data.decode("utf-8"))
+        payload = json.loads(data.decode("utf-8-sig"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise UpdateError("更新服务器返回了无法解析的数据。") from exc
     if not isinstance(payload, dict):

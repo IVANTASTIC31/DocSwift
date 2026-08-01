@@ -1,7 +1,7 @@
 param(
-    [string]$Version = "0.3.0",
+    [string]$Version = "0.3.1",
     [string]$BaseUrl = "http://192.168.100.3/updates/docswift",
-    [string]$Notes = "DocSwift v0.3.0: startup feedback, rotating logs, background recognition queue, safer card removal, streamlined controls, and a new application icon."
+    [string]$Notes = "DocSwift v0.3.1: fixes internal update manifest compatibility with UTF-8 BOM and generates future manifests as UTF-8 without BOM."
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,9 +33,9 @@ $Manifest = [ordered]@{
     notes = $Notes
 }
 
-$Manifest |
-    ConvertTo-Json -Depth 4 |
-    Set-Content -LiteralPath $ManifestPath -Encoding utf8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$json = $Manifest | ConvertTo-Json -Depth 4
+[System.IO.File]::WriteAllText($ManifestPath, $json, $utf8NoBom)
 
 Write-Host "Internal manifest: $ManifestPath" -ForegroundColor Green
 Write-Host "SHA-256:          $Hash" -ForegroundColor Green

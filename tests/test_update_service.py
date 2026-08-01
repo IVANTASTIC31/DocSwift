@@ -1,6 +1,8 @@
 import hashlib
 import io
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -13,6 +15,7 @@ from update_service import (
     UpdateError,
     UpdateInfo,
     UpdateService,
+    _decode_json,
     parse_version,
 )
 
@@ -48,6 +51,136 @@ def update_info(archive: bytes) -> UpdateInfo:
         ),
         source="测试源",
     )
+
+
+class DecodeJsonTest(unittest.TestCase):
+    def test_accepts_plain_utf8(self) -> None:
+        payload = _decode_json(b'{"key": "value"}')
+        self.assertEqual({"key": "value"}, payload)
+
+    def test_accepts_utf8_with_bom(self) -> None:
+        bom = b"\xef\xbb\xbf"
+        payload = _decode_json(bom + b'{"key": "value"}')
+        self.assertEqual({"key": "value"}, payload)
+
+    def test_accepts_bom_only_manifest(self) -> None:
+        bom = b"\xef\xbb\xbf"
+        body = json.dumps(
+            {
+                "manifest_version": 1,
+                "application": "DocSwift",
+                "version": "0.3.0",
+                "published_at": "2026-07-31T08:32:00+08:00",
+                "download_url": (
+                    "http://192.168.100.3/updates/docswift/releases/v0.3.0/"
+                    "DocSwift-v0.3.0-windows-portable.zip"
+                ),
+                "sha256": "b" * 64,
+                "size": 456,
+                "notes": "BOM test",
+            }
+        ).encode("utf-8")
+        payload = _decode_json(bom + body)
+        self.assertEqual("DocSwift", payload["application"])
+        self.assertEqual("0.3.0", payload["version"])
+
+    def test_rejects_invalid_json(self) -> None:
+        with self.assertRaises(UpdateError):
+            _decode_json(b"not json")
+
+    def test_rejects_non_object_json(self) -> None:
+        with self.assertRaises(UpdateError):
+            _decode_json(b"[1, 2, 3]")
+        with self.assertRaises(UpdateError):
+            _decode_json(b'"string"')
+        with self.assertRaises(UpdateError):
+            _decode_json(b"42")
+
+    def test_rejects_malformed_utf8(self) -> None:
+        with self.assertRaises(UpdateError):
+            _decode_json(b"\xff\xfe{\"key\": \"value\"}")
+
+
+_POWERSHELL_AVAILABLE = bool(shutil.which("powershell.exe"))
+
+
+@unittest.skipUnless(_POWERSHELL_AVAILABLE, "powershell.exe not available")
+class ManifestGeneratorTest(unittest.TestCase):
+    def test_generated_manifest_has_no_bom_and_is_valid_json(self) -> None:
+        project_root = Path(__file__).resolve().parent.parent
+        source_script = project_root / "release" / "prepare_internal_manifest.ps1"
+        if not source_script.is_file():
+            self.skipTest("prepare_internal_manifest.ps1 not found")
+
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            # Recreate the expected directory layout inside tmp so the
+            # script never touches the real project tree.
+            release_dir = tmp_path / "release"
+            release_dir.mkdir()
+            script = release_dir / "prepare_internal_manifest.ps1"
+            shutil.copy2(source_script, script)
+
+            dist_release = tmp_path / "dist" / "release"
+            dist_release.mkdir(parents=True)
+            dummy_zip = dist_release / "DocSwift-v0.3.0-windows-portable.zip"
+            dummy_zip.write_bytes(b"fake release package")
+
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                    "-Version",
+                    "0.3.0",
+                    "-BaseUrl",
+                    "http://192.168.100.3/updates/docswift",
+                    "-Notes",
+                    "BOM regression test",
+                ],
+                cwd=str(tmp_path),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(
+                0,
+                result.returncode,
+                f"PowerShell exited {result.returncode}: {result.stderr}",
+            )
+
+            manifest = dist_release / "latest.json"
+            if not manifest.is_file():
+                candidates = list(tmp_path.rglob("latest.json"))
+                if not candidates:
+                    self.fail(
+                        "PowerShell script did not produce latest.json "
+                        f"under {tmp_path}"
+                    )
+                manifest = candidates[0]
+
+            raw = manifest.read_bytes()
+
+            # Assert no UTF-8 BOM
+            self.assertNotEqual(
+                b"\xef\xbb\xbf",
+                raw[:3],
+                "latest.json must not start with UTF-8 BOM",
+            )
+
+            # Assert valid JSON
+            try:
+                doc = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                self.fail(f"latest.json is not valid JSON: {exc}")
+
+            self.assertIsInstance(doc, dict)
+            self.assertEqual(1, doc.get("manifest_version"))
+            self.assertEqual("DocSwift", doc.get("application"))
 
 
 class UpdateServiceTest(unittest.TestCase):

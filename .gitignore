@@ -10,7 +10,11 @@ dist/
 *.exe
 
 # Local tooling
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/project-memory-runtime/
+!.agents/skills/project-memory-runtime/SKILL.md
 .codex/
 
 # User input, generated output, QA artifacts, and local state

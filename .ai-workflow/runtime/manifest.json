@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "runtime_version": "4.0.0",
+  "guardrail_profile": "a7b2ad6422bd",
+  "generated_by": "maintain-project-memory",
+  "python": ">=3.10",
+  "files": {
+    "lib/audit_project_memory.py": "1e5aeec2adab5be5bbc8af1b1ed23c4cae35ae19c3d41b4f83b8465f0ef799d4",
+    "lib/close_task.py": "ad30977f4d73a4c2b893a1c2cfdd89c706707712ed188038c755143989b6c959",
+    "lib/collaboration_lib.py": "03f62a8ae001d545698f3a15d0177f8d6404d64e2dfe41f88a23c6189192215b",
+    "lib/handoff_task.py": "f732d275eda035249d613db8e7b9f287d469768cf36101aaf886308b47c12335",
+    "lib/memory_lib.py": "ed732248a81adc3ce9ba12507d013faeda573b959603df89634760fc5cef8e40",
+    "lib/propose_lesson.py": "53e568bca810b6d0ce817f386da498dfe0c7711fb0b06aae3e5960873119d8e0",
+    "lib/record_task_audit.py": "7c9580244b6d9d0abbad743a332109b0d22b0654cff5db562b9aeaaa2228ba45",
+    "lib/start_task.py": "81fab46e7940a790c3a053b2ad69ede949c6eccc03e3d7822d4edec9ff84ce85",
+    "lib/workflow_lib.py": "6be0bf5ce4629ecc2720e0a8c0ebad734eb654ad818120235a7b61bbbb511560",
+    "lib/workflow_preflight.py": "317055e523bd5164c1019fcbb6d670d16d952720b9931cbdbbac79bec3485090",
+    "project_memory.py": "3123248f5596701c6fb5cc5c2822508ab489fa8e769c51d030edfc5ea3fa9454",
+    "references/lessons-architecture.md": "7aee64e73395f6612753321314f36dabcb3737d11ef4baec40b2aa7ee07a0ff0",
+    "references/lessons-code-editing.md": "8c776c4687374deb1dbc4e4f62f1b67ff8a72da0d64469569ab254ff732a0944",
+    "references/lessons-documentation.md": "153c886f2e57d3a9523e636670d1b9f4aa193858c4ed09f62481a0b512e63a8b",
+    "references/lessons-git.md": "b4ca4633ffaafe09009e2a126cceae1f4d08b14e530375daa792f8dda3d11c23",
+    "references/lessons-index.md": "ec06bceb25d85e4739e8a884cbc5c5b02d7a8f2f7710aaa2751a57ee78c0a5a7",
+    "references/lessons-operations.md": "9c8387c7576696e98c37b8e41295a5bd608189e8f97552e3e31a34006abd3cb3",
+    "references/lessons-security.md": "561efb2fd21a7e4e791a95cb475bada5283c330f7f7263c709c82231c3efd174",
+    "references/lessons-testing.md": "4c06f139f87ee3b15bea3562a660f22b233a9254260d4447aa851cef31564c1d",
+    "references/workflow-guardrails.md": "b27cdf1418a44bc582c208871da6624f91edef83fb1d9866793811d01e8dceb4",
+    "templates/PROJECT_LESSON.md": "791c8eca2e32214ae7d3cb17de598d29348b24b081edc508ef4e801dcc3a698a",
+    "templates/TASK_BRIEF.md": "223adfeb7a94316fc8253ee189b0b4603d3e99f68028919fd8a905ae1aa83adb",
+    "templates/TASK_RESULT.md": "72668e07029e46762aaf597208d3451153e17f4636e6189dc4dbd0a0d8c8ef87"
+  }
+}

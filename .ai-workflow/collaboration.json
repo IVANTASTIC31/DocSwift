@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "runtime_version": "4.0.0",
+  "guardrail_profile": "a7b2ad6422bd",
+  "orchestrator": "codex",
+  "orchestrator_model_preference": "gpt-5.6-sol",
+  "enabled_workers": [
+    "claude-code",
+    "hermes"
+  ],
+  "worker_model_preference": "DeepSeek",
+  "role_policy": "orchestrator-worker",
+  "single_active_worker": true
+}

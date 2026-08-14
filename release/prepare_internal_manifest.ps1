@@ -1,7 +1,7 @@
-param(
-    [string]$Version = "0.3.1",
+﻿param(
+    [string]$Version = "0.3.2",
     [string]$BaseUrl = "http://192.168.100.3/updates/docswift",
-    [string]$Notes = "DocSwift v0.3.1: fixes internal update manifest compatibility with UTF-8 BOM and generates future manifests as UTF-8 without BOM."
+    [string]$Notes = "DocSwift v0.3.2：校对表完整展开长工序内容并提供竖向滚动；确认工艺卡后自动进入下一张待确认卡；全部确认后直接打开批量导出确认；Excel 工序号列首行表头保持空白；工艺路线 Excel 保留官方模板底层结构，修复生成文件无法导入小黑湖的问题。"
 )
 
 $ErrorActionPreference = "Stop"

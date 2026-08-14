@@ -687,12 +687,19 @@ class MainWindow(QMainWindow):
         self.operations_table.setWordWrap(True)
         self.operations_table.setAlternatingRowColors(True)
         self.operations_table.verticalHeader().setVisible(False)
+        self.operations_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.operations_table.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
         header = self.operations_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.sectionResized.connect(self._operation_column_resized)
         self.operations_table.itemChanged.connect(self._operation_item_changed)
         self.operations_table.itemDoubleClicked.connect(self._operation_double_clicked)
         self.operations_table.itemSelectionChanged.connect(self._operation_selection_changed)
@@ -866,6 +873,44 @@ class MainWindow(QMainWindow):
         self._load_card_details(self.current_card_id)
         self._ensure_preview(self.current_card_id)
 
+    def _operation_row_height(self, content: str) -> int:
+        """Estimate the pixel height needed to show 工序内容 in full.
+
+        The content column auto-wraps, so height must account for both
+        explicit newlines and soft wraps of long lines. The previous
+        implementation capped rows at 120 px, which truncated long content.
+        """
+        font_metrics = self.operations_table.fontMetrics()
+        line_height = max(20, font_metrics.lineSpacing() + 2)
+        column_width = self.operations_table.columnWidth(3)
+        if column_width <= 40:
+            column_width = 420
+        effective_width = max(40, column_width - 16)
+        total_lines = 0
+        for line in content.split("\n"):
+            text_width = font_metrics.horizontalAdvance(line)
+            total_lines += max(
+                1,
+                (text_width + effective_width - 1) // effective_width,
+            )
+        return max(38, total_lines * line_height + 10)
+
+    def _operation_column_resized(
+        self,
+        logical_index: int,
+        _old_size: int,
+        _new_size: int,
+    ) -> None:
+        if logical_index != 3:
+            return
+        for row_index in range(self.operations_table.rowCount()):
+            content_item = self.operations_table.item(row_index, 3)
+            if content_item is not None:
+                self.operations_table.setRowHeight(
+                    row_index,
+                    self._operation_row_height(content_item.text()),
+                )
+
     def _load_card_details(self, card_id: int) -> None:
         card = self.store.get_card(card_id)
         self.loading_operations = True
@@ -899,7 +944,7 @@ class MainWindow(QMainWindow):
                     item.setToolTip("双击打开多行编辑窗口")
                 self.operations_table.setItem(row_index, column, item)
             self.operations_table.setRowHeight(
-                row_index, min(120, max(38, 22 * (operation.content.count("\n") + 1)))
+                row_index, self._operation_row_height(operation.content)
             )
         locked = card.status in (
             CardStatus.QUEUED,
@@ -1483,6 +1528,23 @@ class MainWindow(QMainWindow):
         self._refresh_cards(select_card_id=self.current_card_id)
         self._load_card_details(self.current_card_id)
 
+    def _next_pending_card_id(self, after_card_id: int) -> int | None:
+        cards = self.store.list_cards(self.task.id)
+        pending_ids = {card.id for card in cards if card.status == CardStatus.PENDING}
+        if not pending_ids:
+            return None
+        ordered_ids = [card.id for card in cards]
+        if after_card_id in ordered_ids:
+            position = ordered_ids.index(after_card_id)
+            for offset in range(1, len(ordered_ids) + 1):
+                candidate = ordered_ids[(position + offset) % len(ordered_ids)]
+                if candidate in pending_ids:
+                    return candidate
+        return next(
+            (card_id for card_id in ordered_ids if card_id in pending_ids),
+            None,
+        )
+
     def _confirm_current_card(self) -> None:
         if self.current_card_id is None:
             return
@@ -1491,9 +1553,29 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, APP_TITLE, str(exc))
             return
-        self._refresh_cards(select_card_id=self.current_card_id)
-        self._load_card_details(self.current_card_id)
-        self.status_label.setText("当前工艺卡已确认，可以批量导出")
+
+        confirmed_card_id = self.current_card_id
+        next_card_id = self._next_pending_card_id(after_card_id=confirmed_card_id)
+        if next_card_id is not None:
+            self.current_card_id = next_card_id
+            self._refresh_cards(select_card_id=next_card_id)
+            self._load_card_details(next_card_id)
+            self._ensure_preview(next_card_id)
+            self.status_label.setText("已确认当前工艺卡，自动跳转到下一张待确认卡")
+            return
+
+        cards = self.store.list_cards(self.task.id)
+        all_confirmed = bool(cards) and all(
+            card.status in (CardStatus.CONFIRMED, CardStatus.EXPORTED)
+            for card in cards
+        )
+        self._refresh_cards(select_card_id=confirmed_card_id)
+        self._load_card_details(confirmed_card_id)
+        if all_confirmed:
+            self.status_label.setText("所有工艺卡均已确认，可以批量导出")
+            self._export_confirmed()
+        else:
+            self.status_label.setText("当前工艺卡已确认，仍有工艺卡未完成")
 
     def _reopen_current_card(self) -> None:
         if self.current_card_id is None:

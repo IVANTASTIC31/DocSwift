@@ -1,0 +1,22 @@
+{
+  "task_id": "2026-08-13-release-v0-3-2",
+  "orchestrator": "codex",
+  "execution_agent": "hermes",
+  "active_agent": "codex",
+  "phase": "CLOSED",
+  "handoff_from": "hermes",
+  "handoff_to": null,
+  "handoff_at": "2026-08-13T13:10:04+08:00",
+  "handoff_commit": "fe336d1083646d5c66cee928fdfee3523860b2a1",
+  "handoff_fingerprint": "a46576806283c144",
+  "next_action": "推送前刷新 origin 与 company，确认 main 无分叉后提交、创建 v0.3.2 annotated tag 并推送代码与标签；服务器上传由用户人工完成。",
+  "protected_documents": {
+    ".ai-workflow/tasks/2026-08-13-release-v0-3-2/brief.md": "9fd866a8ca74668719d55a9f2a9fe7d4c15282ab66a402f0538b6fcff1d04fcd",
+    "AGENTS.md": "fdda1ae1d097676b8ccf607bfe62b121fcb7a9dd7ca650d48b4bbad8d9069283",
+    "CHANGELOG.md": "48b79376a58356c9ca86547ac81b61d84909053e8431298d3f70347479b197e0",
+    "docs/ARCHITECTURE.md": "a91dd65503d3d456b7f0adaff319f1f6f600c4935f835935c7f36fbb5189d819",
+    "docs/STATUS.md": "63303ce9abb47d635af12c3f92a5002a14fda2c1a935576bb2b9d8b344b60819"
+  },
+  "accepted_at": "2026-08-13T13:12:33+08:00",
+  "accepted_fingerprint": "a46576806283c144"
+}

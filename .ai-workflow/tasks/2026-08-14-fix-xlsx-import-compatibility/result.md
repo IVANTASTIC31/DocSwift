@@ -6,12 +6,12 @@ updated: "2026-08-14"
 base_commit: "fe336d1"
 orchestrator_agent: "codex"
 execution_agent: "claude-code"
-last_verified: "2026-08-14T12:01:25+08:00"
+last_verified: "2026-08-14T12:19:20+08:00"
 audit_status: "PASSED"
-audited_at: "2026-08-14T12:01:25+08:00"
+audited_at: "2026-08-14T12:19:20+08:00"
 audited_by: "Codex"
-audited_commit: "7d179cb94520437673bc824a70c017241c3f282e"
-audited_worktree_fingerprint: "bff3f9256d700a9d"
+audited_commit: "3a8bacd6ab37a62b8899f1134ca5364785661d20"
+audited_worktree_fingerprint: "9b34e1b9acfe21be"
 ---
 
 # Task result: 修复 Excel 导出文件的小黑湖导入兼容性
@@ -50,6 +50,10 @@ audited_worktree_fingerprint: "bff3f9256d700a9d"
 | 用户实际模板只读诊断生成并比较 ZIP 部件 SHA-256 | PASS | 仅 `sheet1.xml` 与 `sharedStrings.xml` 变化；诊断输出已清理，未上传小黑湖 |
 | `powershell -NoProfile -ExecutionPolicy Bypass -File release\build_release.ps1 -Version 0.3.2` | PASS | 本机 Windows/PyInstaller 6.16.0 构建 |
 | `powershell -NoProfile -ExecutionPolicy Bypass -File release\prepare_internal_manifest.ps1 -Version 0.3.2` | PASS | 仅生成本地内部更新清单，未上传服务器 |
+| `$env:PYTHONPATH=''; .venv\Scripts\python.exe -m unittest tests.test_update_service -v`（v0.3.3） | PASS（19 项） | 使用模拟网络和临时目录 |
+| `$env:PYTHONPATH=''; .venv\Scripts\python.exe -m unittest discover -s tests -v`（v0.3.3） | PASS（50 项） | GUI 测试为 offscreen；未做真实小黑湖导入 |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File release\build_release.ps1 -Version 0.3.3` | PASS | 本机 Windows/PyInstaller 6.16.0 构建 |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File release\prepare_internal_manifest.ps1 -Version 0.3.3` | PASS | 清单为 UTF-8 无 BOM；未上传服务器 |
 
 以上检查均由 Codex 在接受正式交接后独立复跑；实际模板验证同时确认 ZIP 部件集合不变、存在 `xl/sharedStrings.xml`、工作表不含 `inlineStr`，且 H2/I2 为真空值。
 
@@ -58,6 +62,7 @@ audited_worktree_fingerprint: "bff3f9256d700a9d"
 - 本轮包保真实现和新增测试未出现最终失败；开发中曾发现 Openpyxl 生成的数据行样式引用超出模板 `styles.xml`，随后改为在模板样式满足细边框、居中和换行条件时复用原样式/行样式，实际模板诊断及包级回归均通过。
 - 未将本轮新输出实际上传小黑湖；任务没有外部系统变更权限。
 - 已重建 `DocSwift-v0.3.2-windows-portable.zip`；大小为 `56279351` 字节，SHA-256 为 `5ebbbfc012e294e8a80ef29b49a264081a97df5bf982667e5542e51f617b201d`，与 `CHECKSUMS-SHA256.TXT` 和 `latest.json` 一致。
+- 为使已安装 v0.3.2 的客户端能够识别更新，已将本次修复提升为 v0.3.3。新包 `DocSwift-v0.3.3-windows-portable.zip` 大小为 `56277659` 字节，SHA-256 为 `667d1ccb8cca2773fd823694c141790e12dbe5911e057cde3ffe6e3cb86a190a`；ZIP、`CHECKSUMS-SHA256.TXT` 与 `latest.json` 一致，压缩包包含 `DocSwift.exe`。
 
 ## Remaining risks
 
@@ -66,13 +71,13 @@ audited_worktree_fingerprint: "bff3f9256d700a9d"
 
 ## Documentation updates
 
-- Worker 阶段仅更新本任务 `result.md`；Codex 接受交接后更新 `docs/STATUS.md`，并在用户授权发布时补充 `CHANGELOG.md` 与 `release/notes-v0.3.2.md` 的小黑湖兼容性说明。
+- Worker 阶段仅更新本任务 `result.md`；Codex 接受交接后更新 `docs/STATUS.md`，在用户授权发布时补充 `CHANGELOG.md` 和发布说明，并为同版本客户端可识别更新新增 `release/notes-v0.3.3.md`。
 
 ## Exact next action
 
-1. 用户使用本地发布包生成工艺路线文件并在小黑湖执行实际导入验收；若仍失败，保留该新文件及浏览器网络响应正文继续定位。
+1. Codex 创建 v0.3.3 发布提交与 annotated tag 并推送 GitHub；用户随后将 v0.3.3 ZIP、校验文件和 `latest.json` 人工上传公司更新服务器，再由同事从 v0.3.2 点击“检查更新”验收。
 
 ## Worktree and external state
 
 - Worktree：本任务增量仅涉及 `core.py`、`tests/test_core.py` 和本 `result.md`；任务开始前已有的其他已修改及未跟踪文件均保留，未删除或覆盖；本轮诊断临时输出已删除。
-- Commit/push/deployment/shared-data changes：发布提交 `7d179cb` 与 annotated tag `v0.3.2` 已推送 GitHub `origin`；本地发布包及清单已生成但未上传服务器，未改动真实 `%LOCALAPPDATA%\DocSwift`、桌面 Excel 源文件或小黑湖。
+- Commit/push/deployment/shared-data changes：发布提交 `7d179cb` 与 annotated tag `v0.3.2` 已推送 GitHub `origin`；v0.3.3 本地发布包及清单已生成，等待提交和 GitHub 推送。未上传服务器，未改动真实 `%LOCALAPPDATA%\DocSwift`、桌面 Excel 源文件或小黑湖。

@@ -1,7 +1,7 @@
 ﻿param(
-    [string]$Version = "0.3.2",
+    [string]$Version = "0.3.3",
     [string]$BaseUrl = "http://192.168.100.3/updates/docswift",
-    [string]$Notes = "DocSwift v0.3.2：校对表完整展开长工序内容并提供竖向滚动；确认工艺卡后自动进入下一张待确认卡；全部确认后直接打开批量导出确认；Excel 工序号列首行表头保持空白；工艺路线 Excel 保留官方模板底层结构，修复生成文件无法导入小黑湖的问题。"
+    [string]$Notes = "DocSwift v0.3.3：工艺路线 Excel 保留官方模板底层结构并使用共享字符串，修复生成文件无法导入小黑湖的问题；可选字段保持真正空值，输出不再残留数据区之外的空物理行。"
 )
 
 $ErrorActionPreference = "Stop"

@@ -12,7 +12,7 @@ permission_file_edits: "allow"
 permission_dependency_install: "deny"
 permission_git_commit: "allow"
 permission_git_push: "allow"
-permission_git_push_target: "origin/main,origin/v0.3.2"
+permission_git_push_target: "origin/main,origin/v0.3.2,origin/v0.3.3"
 permission_local_database: "deny"
 permission_deploy: "deny"
 permission_deploy_target: "none"
@@ -44,7 +44,7 @@ permission_external_scope: "none"
 - 不改变工艺路线编号、名称、工种、工序号、工序内容、类型和报工数配比的业务规则。
 - 不恢复 D1“工序号”表头；继续保留当前已验收的空白表头行为。
 - 不修改真实桌面源文件、真实 `%LOCALAPPDATA%\DocSwift` 数据或外部系统。
-- 不部署或上传公司更新服务器，不安装依赖；本次仅允许提交、推送 GitHub `origin/main` 与 `origin/v0.3.2`，并在本地重建 v0.3.2 发布物。
+- 不部署或上传公司更新服务器，不安装依赖；本次仅允许提交、推送 GitHub `origin/main`、既有 `origin/v0.3.2` 与新增 `origin/v0.3.3`，并在本地重建 v0.3.3 发布物。
 
 ## Acceptance criteria
 
@@ -85,6 +85,7 @@ $env:PYTHONPATH=''
 - Do not carry commit, push, deploy, or external-mutation authorization into another task.
 - Do not read or record secrets beyond ordinary task-relevant configured access.
 - 用户于 2026-08-14 明确要求将这一版推送 GitHub 后打包；授权范围限于 GitHub `origin/main`、annotated tag `v0.3.2` 与本地发布构建，不包含公司 Gitea、GitHub Release 或服务器上传。
+- 用户随后明确要求把本次兼容性修复提升为 `0.3.3`，以便现有 `0.3.2` 客户端识别更新；授权范围相应扩展至版本文件、v0.3.3 发布说明、本地构建，以及 GitHub `origin/main` 与 annotated tag `v0.3.3`，仍不包含公司 Gitea、GitHub Release 或服务器上传。
 
 ## Documentation impact expected
 

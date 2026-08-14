@@ -1,7 +1,7 @@
 ---
 status: active
 updated: "2026-08-14"
-source_commit: "7d179cb"
+source_commit: "bc7788e"
 active_task: "2026-08-14-fix-xlsx-import-compatibility"
 last_task: "2026-08-13-release-v0-3-2"
 last_verified: "2026-08-14: Codex 完成 v0.3.3 更新服务 19 项、完整回归 50 项、Windows 构建及 ZIP/校验/清单一致性验证，全部通过"
@@ -13,17 +13,17 @@ last_verified: "2026-08-14: Codex 完成 v0.3.3 更新服务 19 项、完整回�
 
 ## 当前阶段
 
-DocSwift 小黑湖 Excel 兼容性修复已提升为 `v0.3.3`，使现有 `v0.3.2` 客户端能够识别更新。v0.3.3 本地 ZIP、校验文件与内部清单已完成并通过验证；公司更新服务器上传仍由用户人工完成。
+DocSwift 小黑湖 Excel 兼容性修复已提升为 `v0.3.3`，使现有 `v0.3.2` 客户端能够识别更新。发布提交 `bc7788e` 与 annotated tag `v0.3.3` 已推送 GitHub；本地 ZIP、校验文件与内部清单已完成并通过验证。公司更新服务器上传仍由用户人工完成。
 
 ## 当前工作
 
 - 任务：`2026-08-14-fix-xlsx-import-compatibility`（修复 Excel 导出文件的小黑湖导入兼容性）
-- 状态：v0.3.3 版本元数据、发布说明、构建产物和内部更新清单已完成验证，准备创建发布提交、annotated tag 并推送 GitHub。
+- 状态：v0.3.3 版本元数据、发布说明、构建产物、内部更新清单及 GitHub 推送均已完成，等待用户人工上传公司更新服务器和实际验收。
 - 最近完成：`2026-08-13-release-v0-3-2`（v0.3.2 版本化、测试与本地发布物构建）
 
 ## 最近已知良好状态
 
-- 提交：`7d179cb`（标签 `v0.3.2`，已推送 GitHub）
+- 提交：`bc7788e`（标签 `v0.3.3`，已推送 GitHub）
 - 验证：2026-08-14 Codex 在 Windows 项目 `.venv` 中独立运行 Excel 核心测试 11 项、服务测试 2 项及完整回归 50 项，全部通过；实际模板诊断仅 `xl/worksheets/sheet1.xml` 与 `xl/sharedStrings.xml` 变化，文本使用共享字符串且 H/I 为真空值；未执行真实小黑湖导入。
 
 ## 阻塞项
@@ -39,4 +39,4 @@ DocSwift 小黑湖 Excel 兼容性修复已提升为 `v0.3.3`，使现有 `v0.3.
 
 ## 下一步
 
-1. 创建 v0.3.3 发布提交和 annotated tag 并推送 GitHub；随后由用户人工上传公司更新服务器，再由 v0.3.2 客户端执行自动更新和小黑湖导入验收。
+1. 用户将 v0.3.3 ZIP、`CHECKSUMS-SHA256.TXT` 与 `latest.json` 人工上传公司更新服务器，再由 v0.3.2 客户端执行自动更新和小黑湖导入验收。

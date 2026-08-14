@@ -1,7 +1,7 @@
 ---
 status: active
 updated: "2026-08-14"
-source_commit: "fe336d1"
+source_commit: "7d179cb"
 active_task: "2026-08-14-fix-xlsx-import-compatibility"
 last_task: "2026-08-13-release-v0-3-2"
 last_verified: "2026-08-14: Codex 独立复跑 Excel 核心 11 项、服务 2 项及完整回归 50 项，并用实际模板完成 OOXML 包级验证，全部通过"
@@ -13,17 +13,17 @@ last_verified: "2026-08-14: Codex 独立复跑 Excel 核心 11 项、服务 2 �
 
 ## 当前阶段
 
-DocSwift `v0.3.2` 已合并校对查看、连续确认、导出表头和小黑湖 Excel 兼容性修复。本地发布物、校验文件与内部清单已重建并通过 Codex 独立验证；当前待提交、创建 annotated tag 并推送 GitHub。公司更新服务器上传仍由用户人工完成。
+DocSwift `v0.3.2` 已合并校对查看、连续确认、导出表头和小黑湖 Excel 兼容性修复。本地发布物、校验文件与内部清单已重建并通过 Codex 独立验证；发布提交 `7d179cb` 和 annotated tag `v0.3.2` 已推送 GitHub。公司更新服务器上传仍由用户人工完成。
 
 ## 当前工作
 
 - 任务：`2026-08-14-fix-xlsx-import-compatibility`（修复 Excel 导出文件的小黑湖导入兼容性）
-- 状态：已完成模板包保真导出修复及 v0.3.2 本地发布构建；自动化、实际模板包级验证和发布物校验均通过，准备提交并推送 GitHub，之后等待用户在小黑湖实际导入验收。
+- 状态：已完成模板包保真导出修复、v0.3.2 本地发布构建及 GitHub 推送；自动化、实际模板包级验证和发布物校验均通过，等待用户在小黑湖实际导入验收。
 - 最近完成：`2026-08-13-release-v0-3-2`（v0.3.2 版本化、测试与本地发布物构建）
 
 ## 最近已知良好状态
 
-- 提交：`fe336d1`（标签 `v0.3.1`）
+- 提交：`7d179cb`（标签 `v0.3.2`，已推送 GitHub）
 - 验证：2026-08-14 Codex 在 Windows 项目 `.venv` 中独立运行 Excel 核心测试 11 项、服务测试 2 项及完整回归 50 项，全部通过；实际模板诊断仅 `xl/worksheets/sheet1.xml` 与 `xl/sharedStrings.xml` 变化，文本使用共享字符串且 H/I 为真空值；未执行真实小黑湖导入。
 
 ## 阻塞项
@@ -39,4 +39,4 @@ DocSwift `v0.3.2` 已合并校对查看、连续确认、导出表头和小黑�
 
 ## 下一步
 
-1. 提交当前已审计范围，创建 annotated tag `v0.3.2` 并推送 GitHub `origin/main` 与 `origin/v0.3.2`。
+1. 用户使用本地 `DocSwift-v0.3.2-windows-portable.zip` 解压运行，生成新工艺路线文件并在小黑湖实际导入验收。

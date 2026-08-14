@@ -6,12 +6,12 @@ updated: "2026-08-14"
 base_commit: "fe336d1"
 orchestrator_agent: "codex"
 execution_agent: "claude-code"
-last_verified: "2026-08-14T11:59:30+08:00"
+last_verified: "2026-08-14T12:01:25+08:00"
 audit_status: "PASSED"
-audited_at: "2026-08-14T11:59:30+08:00"
+audited_at: "2026-08-14T12:01:25+08:00"
 audited_by: "Codex"
-audited_commit: "fe336d1083646d5c66cee928fdfee3523860b2a1"
-audited_worktree_fingerprint: "a3797e48265aa130"
+audited_commit: "7d179cb94520437673bc824a70c017241c3f282e"
+audited_worktree_fingerprint: "bff3f9256d700a9d"
 ---
 
 # Task result: 修复 Excel 导出文件的小黑湖导入兼容性
@@ -70,9 +70,9 @@ audited_worktree_fingerprint: "a3797e48265aa130"
 
 ## Exact next action
 
-1. Codex 将已审计提交和 annotated tag `v0.3.2` 推送到 GitHub `origin`；随后用户使用本地发布包生成工艺路线文件并在小黑湖执行实际导入验收。
+1. 用户使用本地发布包生成工艺路线文件并在小黑湖执行实际导入验收；若仍失败，保留该新文件及浏览器网络响应正文继续定位。
 
 ## Worktree and external state
 
 - Worktree：本任务增量仅涉及 `core.py`、`tests/test_core.py` 和本 `result.md`；任务开始前已有的其他已修改及未跟踪文件均保留，未删除或覆盖；本轮诊断临时输出已删除。
-- Commit/push/deployment/shared-data changes：用户已授权提交与 GitHub 推送；当前已生成本地发布包及清单，尚未上传服务器，未改动真实 `%LOCALAPPDATA%\DocSwift`、桌面 Excel 源文件或小黑湖。
+- Commit/push/deployment/shared-data changes：发布提交 `7d179cb` 与 annotated tag `v0.3.2` 已推送 GitHub `origin`；本地发布包及清单已生成但未上传服务器，未改动真实 `%LOCALAPPDATA%\DocSwift`、桌面 Excel 源文件或小黑湖。

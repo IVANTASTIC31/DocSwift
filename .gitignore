@@ -16,6 +16,8 @@ dist/
 !.agents/skills/project-memory-runtime/
 !.agents/skills/project-memory-runtime/SKILL.md
 .codex/
+.reasonix/
+.serena/
 
 # User input, generated output, QA artifacts, and local state
 *.docx
